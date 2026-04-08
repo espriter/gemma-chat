@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemma Chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Gemma 4 E4B</h1>
+      <span id="status" class="status offline">offline</span>
+    </header>
+    <div id="messages"></div>
+    <form id="chat-form" onsubmit="return false">
+      <textarea id="input" placeholder="Type a message..." rows="1" autofocus></textarea>
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
