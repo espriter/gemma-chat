@@ -335,9 +335,17 @@ async function handleSend(directText) {
       thinkingDiv.classList.add("done");
       chatHistory.pop(); // remove the unanswered user message
     } else {
+      clearInterval(thinkingTimer);
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
       thinkingDiv.remove();
       contentNode.remove();
-      assistantDiv.textContent = `Error: ${err.message}`;
+      if (elapsed > 90) {
+        assistantDiv.textContent = `Cloudflare 타임아웃 (${elapsed}초). GPU Desktop이 꺼져있을 수 있습니다. 내부 네트워크에서 시도해주세요.`;
+      } else {
+        assistantDiv.textContent = `Error: ${err.message}`;
+      }
+      assistantDiv.classList.add("error");
+      chatHistory.pop();
     }
   }
 
