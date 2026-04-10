@@ -236,6 +236,7 @@ function renderMarkdown(el, md) {
 }
 
 function setGenerating(val) {
+  if (IS_EXTERNAL) return; // 외부: 항상 비활성 유지
   generating = val;
   sendBtn.style.display = val ? "none" : "";
   cancelBtn.style.display = val ? "" : "none";
