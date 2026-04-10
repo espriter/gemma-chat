@@ -8,7 +8,8 @@ const statusEl = document.getElementById("status");
 let chatHistory = [];
 let generating = false;
 let abortController = null;
-const MAX_HISTORY = 4; // 최근 2턴(user+assistant x2)만 유지, 프롬프트 크기 제한
+const MAX_HISTORY = 4;
+const IS_EXTERNAL = window.location.hostname === "adsb.espriter.net";
 
 // Configure marked
 marked.setOptions({
@@ -114,45 +115,35 @@ async function handleQuickstart(btn) {
     contentEl.outerHTML = `<div class="content">${marked.parse(data.result)}</div>`;
     resultDiv.querySelectorAll("pre code").forEach(b => hljs.highlightElement(b));
 
-    // Action buttons
-    const btnGroup = document.createElement("div");
-    btnGroup.className = "result-actions";
+    // Action buttons — 내부 접근에서만 LLM 요약 버튼 표시
+    if (!IS_EXTERNAL) {
+      const btnGroup = document.createElement("div");
+      btnGroup.className = "result-actions";
 
-    const summarizeBtn = document.createElement("button");
-    summarizeBtn.className = "action-btn";
-    summarizeBtn.textContent = "LLM 정리 (내부전용)";
-    summarizeBtn.addEventListener("click", async () => {
-      summarizeBtn.textContent = "보강 중...";
-      summarizeBtn.disabled = true;
-      try {
-        // 1단계: MiniPC에서 항공기 정보 + 지역명 보강
-        const truncated = truncateResult(data.result, 10);
-        const enrichRes = await fetch("api/enrich", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ result: truncated }),
-        });
-        const enrichData = await enrichRes.json();
-        // 2단계: 보강된 데이터를 GPU LLM에 전달
-        summarizeBtn.remove();
-        handleSend(`다음 ADS-B 데이터를 한국어로 정리해줘. 각 항공기의 hex 코드, 항공사명, 기종, 위치(지역명), 고도, 속도를 포함해서 요약해줘:\n\n${enrichData.enriched}`);
-      } catch (err) {
-        summarizeBtn.textContent = "LLM 정리";
-        summarizeBtn.disabled = false;
-      }
-    });
-    btnGroup.appendChild(summarizeBtn);
-
-    const geoTools = ["recent_aircraft", "search_aircraft", "farthest_aircraft"];
-    if (geoTools.includes(tool)) {
-      const geoBtn = document.createElement("button");
-      geoBtn.className = "action-btn";
-      geoBtn.textContent = "지역 분석";
-      geoBtn.addEventListener("click", () => handleGeoEnrich(data.result, resultDiv, geoBtn));
-      btnGroup.appendChild(geoBtn);
+      const summarizeBtn = document.createElement("button");
+      summarizeBtn.className = "action-btn";
+      summarizeBtn.textContent = "LLM 요약";
+      summarizeBtn.addEventListener("click", async () => {
+        summarizeBtn.textContent = "보강 중...";
+        summarizeBtn.disabled = true;
+        try {
+          const truncated = truncateResult(data.result, 10);
+          const enrichRes = await fetch("api/enrich", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ result: truncated }),
+          });
+          const enrichData = await enrichRes.json();
+          summarizeBtn.remove();
+          handleSend(`다음 ADS-B 데이터를 한국어로 정리해줘. 각 항공기의 hex 코드, 항공사명, 기종, 위치(지역명), 고도, 속도를 포함해서 요약해줘:\n\n${enrichData.enriched}`);
+        } catch (err) {
+          summarizeBtn.textContent = "LLM 요약";
+          summarizeBtn.disabled = false;
+        }
+      });
+      btnGroup.appendChild(summarizeBtn);
+      resultDiv.appendChild(btnGroup);
     }
-
-    resultDiv.appendChild(btnGroup);
   } catch (err) {
     resultDiv.querySelector("pre").textContent = `Error: ${err.message}`;
     resultDiv.classList.add("error");
@@ -262,6 +253,12 @@ cancelBtn.addEventListener("click", () => {
 async function handleSend(directText) {
   const text = directText || input.value.trim();
   if (!text || generating) return;
+
+  // 외부 접근 차단
+  if (IS_EXTERNAL) {
+    alert("LLM 기능은 외부에서 사용할 수 없습니다.");
+    return;
+  }
 
   // GPU 미연결 시 경고
   if (statusEl.textContent === "Local") {

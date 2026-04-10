@@ -69,12 +69,23 @@ def _build_stats(data: dict, backend: str) -> dict:
 import re
 import time as _time
 
-SYSTEM_PROMPT = {
+# GPU 모드: 풍부한 분석, auto_enrich 활성
+SYSTEM_PROMPT_GPU = {
     "role": "system",
     "content": (
         "너는 ADS-B Chat 어시스턴트야. 사용자가 항공기 hex 코드나 좌표를 언급하면 "
-        "자동으로 조회된 정보가 [참고 정보]로 제공될 수 있어. 이 정보를 활용해서 답변해. "
-        "한국어로 답변해."
+        "자동으로 조회된 정보가 [참고 정보]로 제공돼. 이 정보를 활용해서 상세하게 답변해. "
+        "항공사명, 기종, 위치(지역명), 고도, 속도 등을 포함해서 한국어로 답변해."
+    ),
+}
+
+# Local 모드: 간결한 안내만, auto_enrich 비활성 (프롬프트 절약)
+SYSTEM_PROMPT_LOCAL = {
+    "role": "system",
+    "content": (
+        "너는 ADS-B Chat 안내 봇이야. 짧게 답변해. "
+        "데이터 조회가 필요하면 퀵스타트 버튼(최근 항공기, 항공기 정보, 항공기 최근 정보, 날씨 등)을 안내해. "
+        "한국어로 2~3문장 이내로 답변해."
     ),
 }
 
@@ -114,25 +125,34 @@ async def chat(request: Request):
     """LLM chat — GPU Desktop 우선, 실패 시 로컬 fallback."""
     body = await request.json()
     messages = body.get("messages", [])
-
-    # 시스템 프롬프트 추가
-    if not messages or messages[0].get("role") != "system":
-        messages = [SYSTEM_PROMPT] + messages
-
-    # 마지막 사용자 메시지에서 자동 보강
-    user_msg = messages[-1].get("content", "") if messages else ""
-    if messages[-1].get("role") == "user":
-        enriched = _auto_enrich_message(user_msg)
-        if enriched:
-            messages[-1] = {
-                "role": "user",
-                "content": user_msg + f"\n\n[참고 정보]\n{enriched}",
-            }
     client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip") or request.client.host
+    is_external = bool(request.headers.get("cf-connecting-ip"))
+
+    # 외부 접근 차단
+    if is_external:
+        return {"error": "LLM 기능은 외부에서 사용할 수 없습니다."}
+
+    gpu_available = await _probe_gpu()
+
+    # 시스템 프롬프트: GPU/Local에 따라 분리
+    if not messages or messages[0].get("role") != "system":
+        messages = [SYSTEM_PROMPT_GPU if gpu_available else SYSTEM_PROMPT_LOCAL] + messages
+
+    # GPU 모드: auto_enrich 활성 (hex/좌표 자동 조회)
+    if gpu_available:
+        user_msg = messages[-1].get("content", "") if messages else ""
+        if messages[-1].get("role") == "user":
+            enriched = _auto_enrich_message(user_msg)
+            if enriched:
+                messages[-1] = {
+                    "role": "user",
+                    "content": user_msg + f"\n\n[참고 정보]\n{enriched}",
+                }
+
     user_msg = messages[-1].get("content", "") if messages else ""
 
     # 1차: GPU Desktop 시도
-    if await _probe_gpu():
+    if gpu_available:
         asyncio.create_task(_notify_slack("GPU", user_msg, client_ip))
         try:
             payload = {"model": MODEL_GPU, "messages": messages, "stream": False}
