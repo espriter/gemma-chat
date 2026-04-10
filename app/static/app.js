@@ -28,6 +28,14 @@ input.addEventListener("input", () => {
   input.style.height = Math.min(input.scrollHeight, 120) + "px";
 });
 
+// 외부 접근 시 Send 비활성화
+if (IS_EXTERNAL) {
+  sendBtn.disabled = true;
+  sendBtn.style.opacity = "0.3";
+  input.placeholder = "LLM 기능은 내부 네트워크에서만 사용 가능합니다";
+  input.disabled = true;
+}
+
 // Shift+Enter for newline, Enter to send
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
