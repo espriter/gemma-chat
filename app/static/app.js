@@ -60,7 +60,7 @@ async function checkHealth() {
 }
 
 checkHealth();
-setInterval(checkHealth, 10000);
+setInterval(checkHealth, 30000); // 30초마다 상태 확인
 
 function truncateResult(result, maxRows) {
   const lines = result.split("\n");
