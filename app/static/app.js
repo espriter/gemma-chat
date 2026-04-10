@@ -9,7 +9,7 @@ let chatHistory = [];
 let generating = false;
 let abortController = null;
 const MAX_HISTORY = 4;
-const IS_EXTERNAL = window.location.hostname === "adsb.espriter.net";
+const IS_EXTERNAL = window.location.hostname === "r4tle.espriter.net";
 
 // Configure marked
 marked.setOptions({
