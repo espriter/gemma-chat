@@ -135,7 +135,7 @@ async function handleQuickstart(btn) {
         const enrichData = await enrichRes.json();
         // 2단계: 보강된 데이터를 GPU LLM에 전달
         summarizeBtn.remove();
-        handleSend(`다음 ADS-B 데이터와 보강 정보를 한국어로 읽기 쉽게 정리해줘. 항공기 이름, 위치명을 포함해서:\n\n${enrichData.enriched}`);
+        handleSend(`다음 ADS-B 데이터를 한국어로 정리해줘. 각 항공기의 hex 코드, 항공사명, 기종, 위치(지역명), 고도, 속도를 포함해서 요약해줘:\n\n${enrichData.enriched}`);
       } catch (err) {
         summarizeBtn.textContent = "LLM 정리";
         summarizeBtn.disabled = false;
