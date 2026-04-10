@@ -544,6 +544,17 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
         except Exception as e:
             return f"역지오코딩 오류: {e}"
 
+    if name == "web_fetch":
+        url = args.get("url", "")
+        if not url.startswith("http"):
+            return "유효한 URL을 입력하세요 (http:// 또는 https://)"
+        try:
+            resp = httpx.get(url, timeout=15, follow_redirects=True)
+            content = resp.text[:3000]
+            return f"HTTP {resp.status_code}\n\n{content}"
+        except Exception as e:
+            return f"요청 오류: {e}"
+
     return f"알 수 없는 도구: {name}"
 
 
@@ -715,6 +726,23 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["lat", "lon"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "URL의 내용을 가져옵니다. 공개 웹페이지나 API 응답을 읽을 수 있습니다. 최대 3000자까지 반환됩니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "가져올 URL (http:// 또는 https://)",
+                    }
+                },
+                "required": ["url"],
             },
         },
     },
