@@ -28,12 +28,9 @@ input.addEventListener("input", () => {
   input.style.height = Math.min(input.scrollHeight, 120) + "px";
 });
 
-// 외부 접근 시 Send 비활성화
+// 외부 접근 시 채팅 폼 숨김
 if (IS_EXTERNAL) {
-  sendBtn.disabled = true;
-  sendBtn.style.opacity = "0.3";
-  input.placeholder = "LLM 기능은 내부 네트워크에서만 사용 가능합니다";
-  input.disabled = true;
+  document.getElementById("chat-form").style.display = "none";
 }
 
 // Shift+Enter for newline, Enter to send
