@@ -18,6 +18,38 @@ MODEL_GPU = "gemma4:e4b-it-q8_0"
 GPU_PROBE_TIMEOUT = 3  # GPU Desktop 접근 가능 여부 확인 타임아웃(초)
 SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK_URL", "")
 
+# --- Rate Limiter (외부 접근용) ---
+RATE_LIMIT_MAX = 10       # 분당 최대 요청
+RATE_LIMIT_WINDOW = 60    # 윈도우 (초)
+RATE_LIMIT_BAN = 600      # 초과 시 차단 시간 (초)
+_rate_counts: dict = {}   # {ip: [timestamps]}
+_rate_bans: dict = {}     # {ip: ban_until_timestamp}
+
+
+def _check_rate_limit(ip: str) -> bool:
+    """외부 IP rate limit 체크. True=허용, False=차단."""
+    import time as _t
+    now = _t.time()
+
+    # 차단 중인지 확인
+    if ip in _rate_bans:
+        if now < _rate_bans[ip]:
+            return False
+        del _rate_bans[ip]
+
+    # 윈도우 내 요청 수 카운트
+    if ip not in _rate_counts:
+        _rate_counts[ip] = []
+    _rate_counts[ip] = [t for t in _rate_counts[ip] if now - t < RATE_LIMIT_WINDOW]
+    _rate_counts[ip].append(now)
+
+    if len(_rate_counts[ip]) > RATE_LIMIT_MAX:
+        _rate_bans[ip] = now + RATE_LIMIT_BAN
+        _rate_counts.pop(ip, None)
+        return False
+
+    return True
+
 
 async def _notify_slack(backend: str, user_msg: str, client_ip: str):
     """LLM 요청 시 Slack 알림 (fire-and-forget)."""
@@ -231,6 +263,10 @@ async def chat(request: Request):
 @app.post("/api/tool")
 async def tool_direct(request: Request):
     """Direct tool execution without LLM — for quickstart buttons."""
+    # 외부 접근 rate limit
+    client_ip = request.headers.get("cf-connecting-ip")
+    if client_ip and not _check_rate_limit(client_ip):
+        return {"name": "", "result": "요청 제한 초과. 10분 후 다시 시도해주세요."}
     body = await request.json()
     name = body.get("name", "")
     args = body.get("args", {})
@@ -241,6 +277,10 @@ async def tool_direct(request: Request):
 @app.post("/api/enrich")
 async def enrich(request: Request):
     """Enrich tool result with aircraft info + geocoding before LLM summary."""
+    # 외부 접근 rate limit
+    client_ip = request.headers.get("cf-connecting-ip")
+    if client_ip and not _check_rate_limit(client_ip):
+        return {"enriched": "요청 제한 초과. 10분 후 다시 시도해주세요."}
     body = await request.json()
     result = body.get("result", "")
 
