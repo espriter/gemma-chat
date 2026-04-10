@@ -66,17 +66,47 @@ def _build_stats(data: dict, backend: str) -> dict:
     }
 
 
+import re
+import time as _time
+
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
-        "너는 ADS-B Chat 어시스턴트야. 이 앱에는 퀵스타트 버튼이 있어서 사용자가 직접 데이터를 조회할 수 있어. "
-        "사용 가능한 도구: 최근 항공기, 항공기 검색(hex_ident 이력), 주간 트래픽, 가장 먼 항공기, "
-        "항공기 정보(hex → 등록번호/기종/항공사, hexdb.io), 날씨, 역지오코딩. "
-        "사용자가 특정 항공기 정보를 물으면 '항공기 정보' 버튼으로 hex 코드를 검색하라고 안내해. "
-        "데이터 조회가 필요한 질문에는 적절한 퀵스타트 버튼을 안내해줘. "
+        "너는 ADS-B Chat 어시스턴트야. 사용자가 항공기 hex 코드나 좌표를 언급하면 "
+        "자동으로 조회된 정보가 [참고 정보]로 제공될 수 있어. 이 정보를 활용해서 답변해. "
         "한국어로 답변해."
     ),
 }
+
+# hex 코드 패턴 (6자리 hex, 대소문자)
+HEX_PATTERN = re.compile(r'\b([0-9A-Fa-f]{6})\b')
+# 좌표 패턴 (lat, lon)
+COORD_PATTERN = re.compile(r'(\d{1,3}\.\d{2,6})\s*,\s*(\d{1,3}\.\d{2,6})')
+
+
+def _auto_enrich_message(text: str) -> str:
+    """사용자 메시지에서 hex 코드와 좌표를 감지하여 자동 조회."""
+    enrichments = []
+
+    # hex 코드 감지 → lookup_aircraft
+    hexes = set(HEX_PATTERN.findall(text))
+    for h in sorted(hexes)[:3]:  # 최대 3개
+        info = execute_tool("lookup_aircraft", {"hex_ident": h.upper()})
+        if "찾을 수 없습니다" not in info:
+            one_line = info.replace("\n", ", ").replace("- **", "").replace("**:", ":").replace("**", "")
+            enrichments.append(f"항공기 {h.upper()}: {one_line[:150]}")
+
+    # 좌표 감지 → reverse_geocode
+    coords = COORD_PATTERN.findall(text)
+    for lat_s, lon_s in coords[:2]:  # 최대 2개
+        lat, lon = float(lat_s), float(lon_s)
+        if 30 < lat < 45 and 120 < lon < 135:  # 한반도 근처만
+            geo = execute_tool("reverse_geocode", {"lat": lat, "lon": lon})
+            first_line = geo.split("\n")[0].replace("**", "")
+            enrichments.append(f"위치 ({lat}, {lon}): {first_line}")
+            _time.sleep(1.1)  # Nominatim rate limit
+
+    return "\n".join(enrichments) if enrichments else ""
 
 
 @app.post("/api/chat")
@@ -84,9 +114,20 @@ async def chat(request: Request):
     """LLM chat — GPU Desktop 우선, 실패 시 로컬 fallback."""
     body = await request.json()
     messages = body.get("messages", [])
-    # 시스템 프롬프트가 없으면 맨 앞에 추가
+
+    # 시스템 프롬프트 추가
     if not messages or messages[0].get("role") != "system":
         messages = [SYSTEM_PROMPT] + messages
+
+    # 마지막 사용자 메시지에서 자동 보강
+    user_msg = messages[-1].get("content", "") if messages else ""
+    if messages[-1].get("role") == "user":
+        enriched = _auto_enrich_message(user_msg)
+        if enriched:
+            messages[-1] = {
+                "role": "user",
+                "content": user_msg + f"\n\n[참고 정보]\n{enriched}",
+            }
     client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip") or request.client.host
     user_msg = messages[-1].get("content", "") if messages else ""
 
