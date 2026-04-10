@@ -84,6 +84,22 @@ def _fmt_time(ts):
     return s[:5]
 
 
+def _lookup_airline(hex_ident: str) -> str:
+    """hexdb.io에서 항공사/기종 간략 조회. 실패 시 빈 문자열."""
+    try:
+        resp = httpx.get(f"https://hexdb.io/api/v1/aircraft/{hex_ident}", timeout=5)
+        data = resp.json()
+        if data.get("status") == "404":
+            return ""
+        owner = data.get("RegisteredOwners", "")
+        typ = data.get("Type", "")
+        if owner and typ:
+            return f"{owner}, {typ}"
+        return owner or typ or ""
+    except Exception:
+        return ""
+
+
 # --- Tool implementations ---
 
 
@@ -129,16 +145,18 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
             if not rows:
                 return f"최근 {minutes}분 내 관측된 항공기가 없습니다."
             lines = [f"### 최근 {minutes}분 고유 항공기 — {len(rows)}대\n"]
-            lines.append("| # | hex | 고도(ft) | 속도(kts) | 위도 | 경도 | 최종(KST) | 비고 |")
-            lines.append("|---|-----|----------|-----------|------|------|-----------|------|")
+            lines.append("| # | hex | 항공사/기종 | 고도(ft) | 속도(kts) | 위도 | 경도 | 최종(KST) | 비고 |")
+            lines.append("|---|-----|-----------|----------|-----------|------|------|-----------|------|")
             for i, r in enumerate(rows, 1):
+                hex_id = r.get("hex_ident", "-")
+                airline = _lookup_airline(hex_id) or "-"
                 alt = _fmt_num(r.get("altitude"))
                 spd = _fmt_num(r.get("ground_speed"))
                 lat = r.get("latitude") or "-"
                 lon = r.get("longitude") or "-"
                 t = _fmt_time(r.get("last_seen_kst"))
                 note = "지상" if r.get("is_on_ground") else ""
-                lines.append(f"| {i} | `{r.get('hex_ident','-')}` | {alt} | {spd} | {lat} | {lon} | {t} | {note} |")
+                lines.append(f"| {i} | `{hex_id}` | {airline} | {alt} | {spd} | {lat} | {lon} | {t} | {note} |")
             return "\n".join(lines)
         return _execute_query(sql)
 
@@ -170,7 +188,12 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
                 return err
             if not rows:
                 return f"{hex_ident}: 최근 {hours}시간 내 데이터 없음"
-            lines = [f"### {hex_ident} 위치 이력 (10분 단위, KST, 최근 {hours}시간)\n"]
+            airline = _lookup_airline(hex_ident)
+            header = f"### {hex_ident}"
+            if airline:
+                header += f" ({airline})"
+            header += f" — 위치 이력 (10분 단위, KST, 최근 {hours}시간)\n"
+            lines = [header]
             lines.append("| 시간(KST) | 고도(ft) | 속도(kts) | 위도 | 경도 | 건수 | 비고 |")
             lines.append("|-----------|----------|-----------|------|------|------|------|")
             for r in rows:
@@ -309,13 +332,17 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
             if not rows:
                 return f"최근 {hours}시간 내 위치 데이터가 없습니다."
             lines = [f"### 최근 {hours}시간 가장 먼 항공기 — Top {len(rows)}\n"]
+            lines.append("| # | hex | 항공사/기종 | 거리(km) | 고도(ft) | 위도 | 경도 | 시간 |")
+            lines.append("|---|-----|-----------|---------|----------|------|------|------|")
             for i, r in enumerate(rows, 1):
+                hex_id = r.get("hex_ident", "-")
+                airline = _lookup_airline(hex_id) or "-"
                 dist = r.get("distance_km", "-")
                 alt = _fmt_num(r.get("altitude"))
                 t = _fmt_time(r.get("time_generated"))
                 lat = r.get("latitude", "-")
                 lon = r.get("longitude", "-")
-                lines.append(f"**{i}.** `{r.get('hex_ident','-')}` — **{dist}km**, {alt}ft, ({lat}, {lon}), {t}")
+                lines.append(f"| {i} | `{hex_id}` | {airline} | {dist} | {alt} | {lat} | {lon} | {t} |")
             return "\n".join(lines)
         return _execute_query(sql)
 

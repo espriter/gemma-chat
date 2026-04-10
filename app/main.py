@@ -309,7 +309,7 @@ async def enrich(request: Request):
 
     # Parse header to find hex_ident, latitude, longitude columns
     headers = [h.strip().lower() for h in lines[0].split("|")]
-    hex_idx = next((i for i, h in enumerate(headers) if h == "hex_ident"), None)
+    hex_idx = next((i for i, h in enumerate(headers) if h in ("hex_ident", "hex")), None)
     lat_idx = next((i for i, h in enumerate(headers) if h in ("latitude", "위도")), None)
     lon_idx = next((i for i, h in enumerate(headers) if h in ("longitude", "경도")), None)
 
