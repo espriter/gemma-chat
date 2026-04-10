@@ -1,4 +1,6 @@
 import json
+import socket
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -6,10 +8,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.tools import TOOL_DEFINITIONS, execute_tool
+from app.tools import execute_tool
 
-OLLAMA_BASE = "http://localhost:11434"
-MODEL = "gemma4:e4b"
+OLLAMA_LOCAL = "http://localhost:11434"
+OLLAMA_GPU = "http://localhost:11435"  # SSH tunnel → GPU Desktop WSL Ollama
+MODEL_LOCAL = "qwen25-minipc"
+MODEL_GPU = "gemma4:e4b-it-q8_0"
+GPU_PROBE_TIMEOUT = 3  # GPU Desktop 접근 가능 여부 확인 타임아웃(초)
 
 app = FastAPI()
 
@@ -22,93 +27,239 @@ async def index():
     return (static_dir / "index.html").read_text()
 
 
-def _build_payload(messages, tools=None, stream=True):
-    payload = {"model": MODEL, "messages": messages, "stream": stream}
-    if tools:
-        payload["tools"] = tools
-    return payload
+# --- LLM Chat Mode (GPU fallback → Local) ---
+# 1차: GPU Desktop Ollama (SSH 터널, localhost:11435) 시도
+# 2차: 로컬 MiniPC Ollama (localhost:11434) fallback
+CHAT_TIMEOUT = 600
+
+
+async def _probe_gpu() -> bool:
+    """GPU Desktop Ollama 접근 가능 여부를 빠르게 확인."""
+    try:
+        async with httpx.AsyncClient(timeout=GPU_PROBE_TIMEOUT) as client:
+            resp = await client.get(f"{OLLAMA_GPU}/api/tags")
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _build_stats(data: dict, backend: str) -> dict:
+    return {
+        "backend": backend,
+        "total_sec": round(data.get("total_duration", 0) / 1e9, 1),
+        "load_sec": round(data.get("load_duration", 0) / 1e9, 1),
+        "prompt_tokens": data.get("prompt_eval_count", 0),
+        "output_tokens": data.get("eval_count", 0),
+        "tok_per_sec": round(data.get("eval_count", 0) / max(data.get("eval_duration", 1) / 1e9, 0.1), 1),
+    }
 
 
 @app.post("/api/chat")
 async def chat(request: Request):
+    """LLM chat — GPU Desktop 우선, 실패 시 로컬 fallback."""
     body = await request.json()
     messages = body.get("messages", [])
-    use_tools = body.get("tools", True)
 
-    async def stream():
+    # 1차: GPU Desktop 시도
+    if await _probe_gpu():
         try:
-            async with httpx.AsyncClient(timeout=None) as client:
-                # Phase 1: non-streaming call with tools to check for tool_calls
-                if use_tools:
-                    yield f"data: {json.dumps({'status': 'thinking'})}\n\n"
-                    resp = await client.post(f"{OLLAMA_BASE}/api/chat", json=_build_payload(messages, TOOL_DEFINITIONS, stream=False))
-                    data = resp.json()
+            payload = {"model": MODEL_GPU, "messages": messages, "stream": False}
+            async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
+                resp = await client.post(f"{OLLAMA_GPU}/api/chat", json=payload)
+                data = resp.json()
+                if "error" not in data:
+                    content = data.get("message", {}).get("content", "")
+                    return {"content": content, "stats": _build_stats(data, "GPU")}
+        except Exception:
+            pass  # GPU 실패 → 로컬 fallback
 
-                    if "error" in data:
-                        yield f"data: {json.dumps({'error': data['error']})}\n\n"
-                        return
+    # 2차: 로컬 MiniPC
+    try:
+        payload = {"model": MODEL_LOCAL, "messages": messages, "stream": False}
+        async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
+            resp = await client.post(f"{OLLAMA_LOCAL}/api/chat", json=payload)
+            data = resp.json()
+            if "error" in data:
+                return {"error": data["error"]}
+            content = data.get("message", {}).get("content", "")
+            return {"content": content, "stats": _build_stats(data, "Local")}
+    except httpx.ReadTimeout:
+        return {"error": f"응답 시간 초과 ({CHAT_TIMEOUT}초). 질문을 짧게 해보세요."}
+    except Exception as e:
+        return {"error": str(e)}
 
-                    msg = data.get("message", {})
-                    tool_calls = msg.get("tool_calls")
 
-                    if tool_calls:
-                        # Execute tools and build follow-up messages
-                        messages.append(msg)
-                        for tc in tool_calls:
-                            fn = tc.get("function", {})
-                            name = fn.get("name", "")
-                            args = fn.get("arguments", {})
-                            yield f"data: {json.dumps({'status': f'querying: {name}'})}\n\n"
-                            result = execute_tool(name, args)
-                            messages.append({"role": "tool", "content": result})
+# --- Streaming version (주석 해제하면 스트리밍 모드로 전환) ---
+# 위의 chat 함수를 주석처리하고, 아래를 활성화하면 토큰 단위 스트리밍.
+# 프론트엔드도 SSE 방식(handleSend의 reader 루프)으로 복원 필요.
+#
+# @app.post("/api/chat")
+# async def chat(request: Request):
+#     """LLM chat — SSE streaming, tokens arrive one by one."""
+#     body = await request.json()
+#     messages = body.get("messages", [])
+#
+#     async def stream():
+#         try:
+#             payload = {"model": MODEL, "messages": messages, "stream": True}
+#             async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
+#                 async with client.stream("POST", f"{OLLAMA_BASE}/api/chat", json=payload) as resp:
+#                     async for line in resp.aiter_lines():
+#                         if not line:
+#                             continue
+#                         data = json.loads(line)
+#                         if "error" in data:
+#                             yield f"data: {json.dumps({'error': data['error']})}\n\n"
+#                             return
+#                         msg = data.get("message", {})
+#                         yield f"data: {json.dumps({'token': msg.get('content', ''), 'done': data.get('done', False)})}\n\n"
+#         except Exception as e:
+#             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+#
+#     return StreamingResponse(stream(), media_type="text/event-stream")
 
-                        # Phase 2: stream final response with tool results
-                        async with client.stream("POST", f"{OLLAMA_BASE}/api/chat", json=_build_payload(messages)) as resp2:
-                            async for line in resp2.aiter_lines():
-                                if not line:
-                                    continue
-                                chunk = json.loads(line)
-                                if "error" in chunk:
-                                    yield f"data: {json.dumps({'error': chunk['error']})}\n\n"
-                                    return
-                                m = chunk.get("message", {})
-                                yield f"data: {json.dumps({'token': m.get('content', ''), 'thinking': m.get('thinking', ''), 'done': chunk.get('done', False)})}\n\n"
-                        return
 
-                    # No tool call — model answered directly (non-streamed)
-                    content = msg.get("content", "")
-                    thinking = msg.get("thinking", "")
-                    if thinking:
-                        yield f"data: {json.dumps({'thinking': thinking, 'token': '', 'done': False})}\n\n"
-                    if content:
-                        yield f"data: {json.dumps({'token': content, 'thinking': '', 'done': False})}\n\n"
-                    yield f"data: {json.dumps({'token': '', 'thinking': '', 'done': True})}\n\n"
-                    return
+@app.post("/api/tool")
+async def tool_direct(request: Request):
+    """Direct tool execution without LLM — for quickstart buttons."""
+    body = await request.json()
+    name = body.get("name", "")
+    args = body.get("args", {})
+    result = execute_tool(name, args, pretty=True)
+    return {"name": name, "result": result}
 
-                # No tools — plain streaming
-                async with client.stream("POST", f"{OLLAMA_BASE}/api/chat", json=_build_payload(messages)) as resp:
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        data = json.loads(line)
-                        if "error" in data:
-                            yield f"data: {json.dumps({'error': data['error']})}\n\n"
-                            return
-                        msg = data.get("message", {})
-                        yield f"data: {json.dumps({'token': msg.get('content', ''), 'thinking': msg.get('thinking', ''), 'done': data.get('done', False)})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+@app.post("/api/enrich")
+async def enrich(request: Request):
+    """Enrich tool result with aircraft info + geocoding before LLM summary."""
+    body = await request.json()
+    result = body.get("result", "")
+
+    lines = result.split("\n")
+    if len(lines) < 3:
+        return {"enriched": result}
+
+    # Parse header to find hex_ident, latitude, longitude columns
+    headers = [h.strip().lower() for h in lines[0].split("|")]
+    hex_idx = next((i for i, h in enumerate(headers) if h == "hex_ident"), None)
+    lat_idx = next((i for i, h in enumerate(headers) if h in ("latitude", "위도")), None)
+    lon_idx = next((i for i, h in enumerate(headers) if h in ("longitude", "경도")), None)
+
+    # Collect unique hex_idents and coordinates
+    hex_set = set()
+    coords = []
+    for line in lines[2:]:
+        cols = [c.strip() for c in line.split("|")]
+        if hex_idx is not None and hex_idx < len(cols):
+            h = cols[hex_idx].strip().replace("`", "")
+            if h and h != "-":
+                hex_set.add(h)
+        if lat_idx is not None and lon_idx is not None:
+            try:
+                lat = float(cols[lat_idx])
+                lon = float(cols[lon_idx])
+                coords.append((lat, lon))
+            except (ValueError, IndexError):
+                pass
+
+    enrichments = []
+
+    # Aircraft lookup (parallel-safe, no rate limit)
+    if hex_set:
+        enrichments.append("**항공기 정보:**")
+        for hex_id in sorted(hex_set)[:10]:
+            info = execute_tool("lookup_aircraft", {"hex_ident": hex_id})
+            # Extract key fields from result
+            one_line = info.replace("\n", " ").replace("- **", "").replace("**:", ":").replace("**", "")
+            enrichments.append(f"- `{hex_id}`: {one_line[:120]}")
+
+    # Reverse geocode (1 req/sec rate limit, max 5)
+    if coords:
+        import time
+        enrichments.append("\n**위치 정보:**")
+        seen = set()
+        for lat, lon in coords[:5]:
+            key = f"{round(lat,2)},{round(lon,2)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            geo = execute_tool("reverse_geocode", {"lat": lat, "lon": lon})
+            first_line = geo.split("\n")[0].replace("**", "")
+            enrichments.append(f"- ({lat}, {lon}) → {first_line}")
+            time.sleep(1.1)
+
+    enriched = result + "\n\n---\n" + "\n".join(enrichments) if enrichments else result
+    return {"enriched": enriched}
+
+
+# --- Wake-on-LAN ---
+GPU_DESKTOP_IP = "192.168.12.32"
+GPU_DESKTOP_MAC = "34:5a:60:6c:00:74"
+GPU_BROADCAST = "192.168.12.255"
+WOL_PORT = 9
+
+
+def _build_magic_packet(mac: str) -> bytes:
+    """FF FF FF FF FF FF + MAC 16번 반복 (총 102바이트)"""
+    mac_bytes = bytes.fromhex(mac.replace(":", "").replace("-", ""))
+    return b"\xff" * 6 + mac_bytes * 16
+
+
+@app.post("/api/wol")
+async def wake_on_lan():
+    """GPU Desktop에 Wake-on-LAN 매직 패킷 전송."""
+    try:
+        packet = _build_magic_packet(GPU_DESKTOP_MAC)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.sendto(packet, (GPU_BROADCAST, WOL_PORT))
+        return {"status": "sent", "mac": GPU_DESKTOP_MAC}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@app.post("/api/wol/shutdown")
+async def shutdown_gpu():
+    """GPU Desktop을 SSH 경유로 원격 종료."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ssh", "-o", "ConnectTimeout=3", f"espriter@{GPU_DESKTOP_IP}",
+            "shutdown", "/s", "/t", "5",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=10)
+        return {"status": "shutdown_sent"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@app.get("/api/wol/status")
+async def wol_status():
+    """GPU Desktop 상태 체크 (SSH 포트 22 접근으로 판단)."""
+    try:
+        conn = asyncio.open_connection(GPU_DESKTOP_IP, 22)
+        reader, writer = await asyncio.wait_for(conn, timeout=2)
+        writer.close()
+        await writer.wait_closed()
+        return {"status": "online", "ip": GPU_DESKTOP_IP}
+    except Exception:
+        return {"status": "offline", "ip": GPU_DESKTOP_IP}
 
 
 @app.get("/api/health")
 async def health():
+    gpu_ok = await _probe_gpu()
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{OLLAMA_BASE}/api/tags")
+            resp = await client.get(f"{OLLAMA_LOCAL}/api/tags")
             models = resp.json().get("models", [])
-            gemma_ready = any(MODEL in m.get("name", "") for m in models)
-            return {"ollama": True, "model_ready": gemma_ready, "model": MODEL}
+            local_ready = any(MODEL_LOCAL in m.get("name", "") for m in models)
+            return {
+                "ollama": True,
+                "model_ready": local_ready or gpu_ok,
+                "model": MODEL_GPU if gpu_ok else MODEL_LOCAL,
+                "backend": "GPU" if gpu_ok else "Local",
+            }
     except Exception:
-        return {"ollama": False, "model_ready": False, "model": MODEL}
+        return {"ollama": gpu_ok, "model_ready": gpu_ok, "model": MODEL_GPU if gpu_ok else MODEL_LOCAL, "backend": "GPU" if gpu_ok else "offline"}

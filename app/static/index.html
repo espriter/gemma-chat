@@ -3,22 +3,41 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gemma Chat</title>
+  <title>ADS-B Chat</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
 </head>
 <body>
   <div id="app">
     <header>
-      <h1>Gemma 4 E4B</h1>
+      <div class="header-left">
+        <h1><a href="/" style="color:inherit;text-decoration:none;">ADS-B Chat</a></h1>
+        <a href="/static/templates.html" class="header-link">Templates</a>
+        <button id="clear-btn" class="header-link" onclick="chatHistory=[];messagesEl.innerHTML='';">Clear</button>
+      </div>
       <span id="status" class="status offline">offline</span>
     </header>
+
+    <div id="quickstart">
+      <span class="qs-label">Quick</span>
+      <button class="qs-btn" data-tool="recent_aircraft" data-args='{"minutes":30,"limit":20}'>최근 항공기</button>
+      <button class="qs-btn" data-tool="unique_aircraft" data-args='{"hours":1}'>고유 항공기</button>
+      <button class="qs-btn" data-tool="traffic_summary" data-args='{"days":7}'>주간 트래픽</button>
+      <button class="qs-btn" data-tool="farthest_aircraft" data-args='{"hours":24,"limit":10}'>가장 먼 항공기</button>
+      <button class="qs-btn" data-tool="search_aircraft" data-args='{"hex_ident":"","hours":24}'>항공기 검색</button>
+      <button class="qs-btn" data-tool="lookup_aircraft" data-args='{"hex_ident":""}'>항공기 정보</button>
+      <button class="qs-btn" data-tool="get_weather" data-args='{"location":"Seongnam"}'>날씨</button>
+    </div>
+
     <div id="messages"></div>
+
     <form id="chat-form" onsubmit="return false">
-      <textarea id="input" placeholder="Type a message..." rows="1" autofocus></textarea>
+      <textarea id="input" placeholder="LLM에게 질문하기..." rows="1" autofocus></textarea>
       <button type="submit" id="send-btn">Send</button>
+      <button type="button" id="cancel-btn" style="display:none;">Stop</button>
     </form>
   </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
   <script src="/static/app.js"></script>

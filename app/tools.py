@@ -26,11 +26,12 @@ ANTENNA_LON = 127.0
 MAX_ROWS = 500
 
 
-def _execute_query(sql: str) -> str:
+def _execute_query(sql: str, as_dicts: bool = False):
     sql_upper = sql.upper()
     for kw in BLOCKED_KEYWORDS:
         if kw in sql_upper:
-            return f"차단됨: {kw} 구문은 사용할 수 없습니다 (읽기 전용)."
+            msg = f"차단됨: {kw} 구문은 사용할 수 없습니다 (읽기 전용)."
+            return ([], msg) if as_dicts else msg
 
     try:
         conn = psycopg2.connect(**DB_CONFIG)
@@ -44,7 +45,10 @@ def _execute_query(sql: str) -> str:
         conn.close()
 
         if not cols:
-            return "결과 없음."
+            return ([], "결과 없음.") if as_dicts else "결과 없음."
+
+        if as_dicts:
+            return [dict(zip(cols, row)) for row in rows], None
 
         lines = [" | ".join(cols)]
         lines.append(" | ".join("---" for _ in cols))
@@ -56,13 +60,34 @@ def _execute_query(sql: str) -> str:
             result += f"\n\n(결과가 {MAX_ROWS}행으로 제한됨)"
         return result
     except Exception as e:
-        return f"쿼리 오류: {e}"
+        msg = f"쿼리 오류: {e}"
+        return ([], msg) if as_dicts else msg
+
+
+def _fmt_num(n):
+    """Format number with comma separators."""
+    if n is None:
+        return "-"
+    try:
+        return f"{int(n):,}"
+    except (ValueError, TypeError):
+        return str(n)
+
+
+def _fmt_time(ts):
+    """Extract HH:MM from timestamp."""
+    if ts is None:
+        return "-"
+    s = str(ts)
+    if " " in s:
+        s = s.split(" ")[1]
+    return s[:5]
 
 
 # --- Tool implementations ---
 
 
-def execute_tool(name: str, args: dict) -> str:
+def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
     if name == "query_adsb_db":
         return _execute_query(args.get("sql", ""))
 
@@ -79,34 +104,91 @@ def execute_tool(name: str, args: dict) -> str:
         """)
 
     if name == "recent_aircraft":
-        minutes = args.get("minutes", 30)
+        minutes = args.get("minutes", 60)
         limit = min(args.get("limit", 20), 100)
-        return _execute_query(f"""
-            SELECT hex_ident, altitude, ground_speed, latitude, longitude,
-                   is_on_ground, date_generated, time_generated
+        sql = f"""
+            SELECT DISTINCT ON (hex_ident)
+                   hex_ident,
+                   altitude,
+                   ground_speed,
+                   latitude,
+                   longitude,
+                   is_on_ground,
+                   (date_generated + time_generated) + INTERVAL '9 hours' AS last_seen_kst
             FROM adsb_message
             WHERE (date_generated + time_generated) >= (NOW() - {int(minutes)} * INTERVAL '1 minute')
-            ORDER BY date_generated DESC, time_generated DESC
-            LIMIT {int(limit)}
-        """)
+              AND hex_ident IS NOT NULL
+            ORDER BY hex_ident, date_generated DESC, time_generated DESC
+        """
+        # 외부 쿼리로 last_seen 정렬 + limit
+        sql = f"SELECT * FROM ({sql}) sub ORDER BY last_seen_kst DESC LIMIT {int(limit)}"
+        if pretty:
+            rows, err = _execute_query(sql, as_dicts=True)
+            if err:
+                return err
+            if not rows:
+                return f"최근 {minutes}분 내 관측된 항공기가 없습니다."
+            lines = [f"### 최근 {minutes}분 고유 항공기 — {len(rows)}대\n"]
+            lines.append("| # | hex | 고도(ft) | 속도(kts) | 위도 | 경도 | 최종(KST) | 비고 |")
+            lines.append("|---|-----|----------|-----------|------|------|-----------|------|")
+            for i, r in enumerate(rows, 1):
+                alt = _fmt_num(r.get("altitude"))
+                spd = _fmt_num(r.get("ground_speed"))
+                lat = r.get("latitude") or "-"
+                lon = r.get("longitude") or "-"
+                t = _fmt_time(r.get("last_seen_kst"))
+                note = "지상" if r.get("is_on_ground") else ""
+                lines.append(f"| {i} | `{r.get('hex_ident','-')}` | {alt} | {spd} | {lat} | {lon} | {t} | {note} |")
+            return "\n".join(lines)
+        return _execute_query(sql)
 
     if name == "search_aircraft":
         hex_ident = args.get("hex_ident", "").strip().upper()
         hours = args.get("hours", 24)
-        limit = min(args.get("limit", 50), 200)
-        return _execute_query(f"""
-            SELECT hex_ident, altitude, ground_speed, latitude, longitude,
-                   is_on_ground, date_generated, time_generated
+        sql = f"""
+            SELECT hex_ident,
+                   DATE_TRUNC('hour', date_generated + time_generated + INTERVAL '9 hours')
+                     + INTERVAL '10 min' * FLOOR(EXTRACT(MINUTE FROM date_generated + time_generated) / 10)
+                     AS time_slot_kst,
+                   (ARRAY_AGG(altitude ORDER BY date_generated DESC, time_generated DESC))[1] AS altitude,
+                   (ARRAY_AGG(ground_speed ORDER BY date_generated DESC, time_generated DESC))[1] AS ground_speed,
+                   (ARRAY_AGG(latitude ORDER BY date_generated DESC, time_generated DESC))[1] AS latitude,
+                   (ARRAY_AGG(longitude ORDER BY date_generated DESC, time_generated DESC))[1] AS longitude,
+                   (ARRAY_AGG(is_on_ground ORDER BY date_generated DESC, time_generated DESC))[1] AS is_on_ground,
+                   COUNT(*) AS msg_count
             FROM adsb_message
             WHERE hex_ident = '{hex_ident}'
               AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
-            ORDER BY date_generated DESC, time_generated DESC
-            LIMIT {int(limit)}
-        """)
+            GROUP BY hex_ident, time_slot_kst
+            ORDER BY time_slot_kst DESC
+            LIMIT 6
+        """
+        if pretty:
+            rows, err = _execute_query(sql, as_dicts=True)
+            if err:
+                return err
+            if not rows:
+                return f"{hex_ident}: 최근 {hours}시간 내 데이터 없음"
+            lines = [f"### {hex_ident} 위치 이력 (10분 단위, KST, 최근 {hours}시간)\n"]
+            lines.append("| 시간(KST) | 고도(ft) | 속도(kts) | 위도 | 경도 | 건수 | 비고 |")
+            lines.append("|-----------|----------|-----------|------|------|------|------|")
+            for r in rows:
+                slot = str(r.get("time_slot_kst", "-"))
+                if " " in slot:
+                    slot = slot.split(" ")[1][:5]
+                alt = _fmt_num(r.get("altitude"))
+                spd = _fmt_num(r.get("ground_speed"))
+                lat = r.get("latitude") or "-"
+                lon = r.get("longitude") or "-"
+                cnt = _fmt_num(r.get("msg_count"))
+                note = "지상" if r.get("is_on_ground") else ""
+                lines.append(f"| {slot} | {alt} | {spd} | {lat} | {lon} | {cnt} | {note} |")
+            return "\n".join(lines)
+        return _execute_query(sql)
 
     if name == "unique_aircraft":
         hours = args.get("hours", 24)
-        return _execute_query(f"""
+        sql = f"""
             SELECT hex_ident,
                    COUNT(*) AS msg_count,
                    MIN(altitude) AS min_alt,
@@ -120,7 +202,26 @@ def execute_tool(name: str, args: dict) -> str:
             GROUP BY hex_ident
             ORDER BY msg_count DESC
             LIMIT 100
-        """)
+        """
+        if pretty:
+            rows, err = _execute_query(sql, as_dicts=True)
+            if err:
+                return err
+            if not rows:
+                return f"최근 {hours}시간 내 관측된 항공기가 없습니다."
+            lines = [f"### 최근 {hours}시간 항공기 현황 — 총 {len(rows)}대\n"]
+            for i, r in enumerate(rows[:20], 1):
+                cnt = _fmt_num(r.get("msg_count"))
+                lo = _fmt_num(r.get("min_alt"))
+                hi = _fmt_num(r.get("max_alt"))
+                spd = _fmt_num(r.get("avg_speed"))
+                t1 = _fmt_time(r.get("first_seen"))
+                t2 = _fmt_time(r.get("last_seen"))
+                lines.append(f"**{i}.** `{r.get('hex_ident','-')}` — {cnt}건, 고도 {lo}~{hi}ft, {spd}kts ({t1}~{t2})")
+            if len(rows) > 20:
+                lines.append(f"\n*...외 {len(rows)-20}대 더*")
+            return "\n".join(lines)
+        return _execute_query(sql)
 
     if name == "high_altitude":
         min_alt = args.get("min_altitude", 35000)
@@ -151,7 +252,7 @@ def execute_tool(name: str, args: dict) -> str:
 
     if name == "traffic_summary":
         days = min(args.get("days", 7), 30)
-        return _execute_query(f"""
+        sql = f"""
             SELECT date_generated,
                    COUNT(*) AS total_messages,
                    COUNT(DISTINCT hex_ident) AS unique_aircraft,
@@ -163,12 +264,28 @@ def execute_tool(name: str, args: dict) -> str:
             WHERE date_generated >= (CURRENT_DATE - {int(days)} * INTERVAL '1 day')
             GROUP BY date_generated
             ORDER BY date_generated DESC
-        """)
+        """
+        if pretty:
+            rows, err = _execute_query(sql, as_dicts=True)
+            if err:
+                return err
+            if not rows:
+                return f"최근 {days}일 트래픽 데이터가 없습니다."
+            lines = [f"### 최근 {days}일 트래픽 요약\n"]
+            for r in rows:
+                d = str(r.get("date_generated", "-"))
+                msgs = _fmt_num(r.get("total_messages"))
+                planes = _fmt_num(r.get("unique_aircraft"))
+                avg_alt = _fmt_num(r.get("avg_altitude"))
+                max_alt = _fmt_num(r.get("max_altitude"))
+                lines.append(f"**{d}** — {msgs}건, {planes}대, 평균고도 {avg_alt}ft, 최대 {max_alt}ft")
+            return "\n".join(lines)
+        return _execute_query(sql)
 
     if name == "farthest_aircraft":
         hours = args.get("hours", 24)
         limit = min(args.get("limit", 10), 50)
-        return _execute_query(f"""
+        sql = f"""
             SELECT hex_ident, latitude, longitude, altitude,
                    date_generated, time_generated,
                    ROUND(
@@ -183,7 +300,23 @@ def execute_tool(name: str, args: dict) -> str:
               AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
             ORDER BY distance_km DESC
             LIMIT {int(limit)}
-        """)
+        """
+        if pretty:
+            rows, err = _execute_query(sql, as_dicts=True)
+            if err:
+                return err
+            if not rows:
+                return f"최근 {hours}시간 내 위치 데이터가 없습니다."
+            lines = [f"### 최근 {hours}시간 가장 먼 항공기 — Top {len(rows)}\n"]
+            for i, r in enumerate(rows, 1):
+                dist = r.get("distance_km", "-")
+                alt = _fmt_num(r.get("altitude"))
+                t = _fmt_time(r.get("time_generated"))
+                lat = r.get("latitude", "-")
+                lon = r.get("longitude", "-")
+                lines.append(f"**{i}.** `{r.get('hex_ident','-')}` — **{dist}km**, {alt}ft, ({lat}, {lon}), {t}")
+            return "\n".join(lines)
+        return _execute_query(sql)
 
     if name == "speed_extremes":
         hours = args.get("hours", 24)
@@ -233,6 +366,111 @@ def execute_tool(name: str, args: dict) -> str:
             ORDER BY ordinal_position
         """)
 
+    if name == "nearby_aircraft":
+        lat = args.get("lat", ANTENNA_LAT)
+        lon = args.get("lon", ANTENNA_LON)
+        radius_km = min(args.get("radius_km", 50), 500)
+        hours = args.get("hours", 24)
+        limit = min(args.get("limit", 20), 100)
+        return _execute_query(f"""
+            SELECT hex_ident, latitude, longitude, altitude, ground_speed,
+                   date_generated, time_generated,
+                   ROUND(
+                     (6371 * ACOS(
+                       COS(RADIANS({float(lat)})) * COS(RADIANS(latitude))
+                       * COS(RADIANS(longitude) - RADIANS({float(lon)}))
+                       + SIN(RADIANS({float(lat)})) * SIN(RADIANS(latitude))
+                     ))::numeric, 2
+                   ) AS distance_km
+            FROM adsb_message
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+              AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
+            HAVING (6371 * ACOS(
+                       COS(RADIANS({float(lat)})) * COS(RADIANS(latitude))
+                       * COS(RADIANS(longitude) - RADIANS({float(lon)}))
+                       + SIN(RADIANS({float(lat)})) * SIN(RADIANS(latitude))
+                     )) <= {float(radius_km)}
+            ORDER BY distance_km ASC
+            LIMIT {int(limit)}
+        """)
+
+    if name == "rapid_altitude_change":
+        hours = args.get("hours", 6)
+        min_change = args.get("min_change_ft", 10000)
+        limit = min(args.get("limit", 20), 50)
+        return _execute_query(f"""
+            SELECT hex_ident,
+                   MIN(altitude) AS min_alt,
+                   MAX(altitude) AS max_alt,
+                   MAX(altitude) - MIN(altitude) AS alt_range_ft,
+                   COUNT(*) AS msg_count,
+                   MIN(date_generated + time_generated) AS first_seen,
+                   MAX(date_generated + time_generated) AS last_seen
+            FROM adsb_message
+            WHERE altitude IS NOT NULL
+              AND hex_ident IS NOT NULL
+              AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
+            GROUP BY hex_ident
+            HAVING MAX(altitude) - MIN(altitude) >= {int(min_change)}
+            ORDER BY alt_range_ft DESC
+            LIMIT {int(limit)}
+        """)
+
+    if name == "flight_duration":
+        hours = args.get("hours", 24)
+        order = "DESC" if args.get("longest", True) else "ASC"
+        limit = min(args.get("limit", 20), 50)
+        return _execute_query(f"""
+            SELECT hex_ident,
+                   MIN(date_generated + time_generated) AS first_seen,
+                   MAX(date_generated + time_generated) AS last_seen,
+                   EXTRACT(EPOCH FROM MAX(date_generated + time_generated)
+                           - MIN(date_generated + time_generated))::int / 60 AS duration_min,
+                   COUNT(*) AS msg_count,
+                   ROUND(AVG(altitude)) AS avg_altitude,
+                   ROUND(AVG(ground_speed)) AS avg_speed
+            FROM adsb_message
+            WHERE hex_ident IS NOT NULL
+              AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
+            GROUP BY hex_ident
+            HAVING COUNT(*) >= 5
+            ORDER BY duration_min {order}
+            LIMIT {int(limit)}
+        """)
+
+    if name == "busiest_hours":
+        days = min(args.get("days", 7), 30)
+        return _execute_query(f"""
+            SELECT EXTRACT(HOUR FROM time_generated)::int AS hour,
+                   COUNT(*) AS total_messages,
+                   COUNT(DISTINCT hex_ident) AS unique_aircraft,
+                   ROUND(AVG(altitude)) AS avg_altitude
+            FROM adsb_message
+            WHERE date_generated >= (CURRENT_DATE - {int(days)} * INTERVAL '1 day')
+            GROUP BY hour
+            ORDER BY total_messages DESC
+        """)
+
+    if name == "korean_aircraft":
+        hours = args.get("hours", 24)
+        limit = min(args.get("limit", 30), 100)
+        return _execute_query(f"""
+            SELECT hex_ident,
+                   COUNT(*) AS msg_count,
+                   MIN(altitude) AS min_alt,
+                   MAX(altitude) AS max_alt,
+                   ROUND(AVG(ground_speed)) AS avg_speed,
+                   MIN(date_generated + time_generated) AS first_seen,
+                   MAX(date_generated + time_generated) AS last_seen
+            FROM adsb_message
+            WHERE hex_ident LIKE '71%'
+              AND hex_ident IS NOT NULL
+              AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
+            GROUP BY hex_ident
+            ORDER BY msg_count DESC
+            LIMIT {int(limit)}
+        """)
+
     # --- External API tools ---
 
     if name == "lookup_aircraft":
@@ -268,7 +506,7 @@ def execute_tool(name: str, args: dict) -> str:
                 mint = w.get("mintempC", "")
                 maxt = w.get("maxtempC", "")
                 desc = w.get("hourly", [{}])[4].get("weatherDesc", [{}])[0].get("value", "") if w.get("hourly") else ""
-                forecast_lines.append(f"  {date}: {mint}~{maxt}°C, {desc}")
+                forecast_lines.append(f"  {date}: {mint}\~{maxt}°C, {desc}")
 
             return (
                 f"위치: {area_name}, {country}\n"
@@ -280,36 +518,6 @@ def execute_tool(name: str, args: dict) -> str:
             )
         except Exception as e:
             return f"날씨 조회 오류: {e}"
-
-    if name == "get_exchange_rate":
-        base = args.get("base", "KRW").upper()
-        targets = [t.strip().upper() for t in args.get("targets", "USD,JPY,EUR").split(",")]
-        try:
-            resp = httpx.get(f"https://api.exchangerate-api.com/v4/latest/{base}", timeout=10)
-            data = resp.json()
-            lines = [f"기준: 1 {base} (갱신: {data.get('date', 'N/A')})"]
-            for t in targets:
-                rate = data["rates"].get(t)
-                if rate:
-                    lines.append(f"  → {t}: {rate}")
-                    if base == "KRW" and rate:
-                        lines.append(f"    (1 {t} = {round(1/rate):,} KRW)")
-                else:
-                    lines.append(f"  → {t}: 없음")
-            return "\n".join(lines)
-        except Exception as e:
-            return f"환율 조회 오류: {e}"
-
-    if name == "web_fetch":
-        url = args.get("url", "")
-        if not url.startswith("http"):
-            return "유효한 URL을 입력하세요 (http:// 또는 https://)"
-        try:
-            resp = httpx.get(url, timeout=15, follow_redirects=True)
-            content = resp.text[:3000]
-            return f"HTTP {resp.status_code}\n\n{content}"
-        except Exception as e:
-            return f"요청 오류: {e}"
 
     if name == "reverse_geocode":
         lat = args.get("lat")
@@ -342,40 +550,6 @@ def execute_tool(name: str, args: dict) -> str:
 # --- Ollama tool definitions ---
 
 TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "query_adsb_db",
-            "description": "RPI4 PostgreSQL에서 읽기 전용 SQL 쿼리를 실행합니다. 테이블: adsb_message (id, message_type, transmission_type, session_id, aircraft_id, hex_ident, flight_id, date_generated, time_generated, altitude, ground_speed, latitude, longitude, is_on_ground, received_at). 현재 약 1천만 행. SELECT만 허용됩니다. 다른 도구로 충분하지 않을 때 사용하세요.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "sql": {
-                        "type": "string",
-                        "description": "실행할 SELECT SQL 쿼리",
-                    }
-                },
-                "required": ["sql"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "ingestion_stats",
-            "description": "시간별 ADS-B 메시지 수집 건수를 조회합니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "hours": {
-                        "type": "integer",
-                        "description": "조회할 시간 범위 (기본: 24)",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -442,44 +616,6 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "high_altitude",
-            "description": "지정 고도 이상에서 비행 중인 항공기를 조회합니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "min_altitude": {
-                        "type": "integer",
-                        "description": "최소 고도 (피트, 기본: 35000)",
-                    },
-                    "hours": {
-                        "type": "integer",
-                        "description": "조회 범위 시간 (기본: 24)",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "ground_aircraft",
-            "description": "지상에 있는 항공기(is_on_ground=true)를 조회합니다. 공항 활동 파악에 유용합니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "minutes": {
-                        "type": "integer",
-                        "description": "조회 범위 분 (기본: 60)",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "traffic_summary",
             "description": "일별 트래픽 요약 통계입니다. 총 메시지 수, 고유 항공기 수, 평균/최대 고도, 평균 속도, 지상 메시지 수를 보여줍니다.",
             "parameters": {
@@ -511,52 +647,6 @@ TOOL_DEFINITIONS = [
                         "description": "결과 수 (기본: 10, 최대: 50)",
                     },
                 },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "speed_extremes",
-            "description": "최근 N시간 내 가장 빠른 항공기 10개와 가장 느린 비행 중 항공기 10개를 조회합니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "hours": {
-                        "type": "integer",
-                        "description": "조회 범위 시간 (기본: 24)",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "altitude_distribution",
-            "description": "고도 구간별(0-1K, 1K-5K, ..., 40K+) 항공기 수와 메시지 수 분포를 보여줍니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "hours": {
-                        "type": "integer",
-                        "description": "조회 범위 시간 (기본: 24)",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "describe_table",
-            "description": "adsb_message 테이블의 스키마(컬럼명, 타입, nullable)를 조회합니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
                 "required": [],
             },
         },
@@ -596,44 +686,6 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_exchange_rate",
-            "description": "환율 정보를 조회합니다. 기준 통화 대비 목표 통화의 환율을 반환합니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "base": {
-                        "type": "string",
-                        "description": "기준 통화 (기본: KRW)",
-                    },
-                    "targets": {
-                        "type": "string",
-                        "description": "목표 통화 (쉼표 구분, 기본: USD,JPY,EUR)",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_fetch",
-            "description": "URL의 내용을 가져옵니다. 공개 웹페이지나 API 응답을 읽을 수 있습니다. 최대 3000자까지 반환됩니다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "가져올 URL (http:// 또는 https://)",
-                    }
-                },
-                "required": ["url"],
             },
         },
     },

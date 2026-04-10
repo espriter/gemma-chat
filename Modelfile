@@ -1,0 +1,6 @@
+FROM qwen2.5:1.5b
+
+# MiniPC resource-optimized settings
+PARAMETER num_ctx 4096
+PARAMETER num_thread 8
+PARAMETER num_gpu 0

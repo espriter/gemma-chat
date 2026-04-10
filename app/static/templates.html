@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ADS-B Query Templates</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 20px;
+      max-width: 768px;
+      margin: 0 auto;
+    }
+    h1 { color: #a0c4ff; font-size: 20px; margin-bottom: 8px; }
+    .back { color: #7eb8ff; text-decoration: none; font-size: 14px; }
+    .back:hover { text-decoration: underline; }
+    .template {
+      background: #2a2a4a;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 16px 0;
+    }
+    .template h2 {
+      color: #a0c4ff;
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+    .template .desc {
+      color: #888;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+    .template pre {
+      background: #16213e;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      line-height: 1.5;
+      overflow-x: auto;
+      position: relative;
+      cursor: pointer;
+    }
+    .template pre:hover { background: #1a2a4e; }
+    .template pre::after {
+      content: '클릭하여 복사';
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      font-size: 11px;
+      color: #666;
+    }
+    .template pre.copied::after {
+      content: '복사됨!';
+      color: #95d5b2;
+    }
+    .param {
+      color: #ffd54f;
+      font-weight: bold;
+    }
+    .comment { color: #666; }
+    hr { border: none; border-top: 1px solid #2a2a4a; margin: 24px 0; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">← 채팅으로 돌아가기</a>
+  <h1>ADS-B Query Templates</h1>
+  <p style="color:#888; font-size:13px; margin-bottom:16px;">클릭하면 복사됩니다. 채팅 입력창에 붙여넣고 <span class="param">노란 값</span>을 수정하세요.</p>
+
+  <div class="template">
+    <h2>최근 항공기</h2>
+    <div class="desc">최근 N분 동안 수신된 항공기 위치 데이터</div>
+    <pre onclick="copyTemplate(this)">최근 <span class="param">30</span>분 내 항공기 <span class="param">20</span>개 보여줘</pre>
+  </div>
+
+  <div class="template">
+    <h2>고유 항공기</h2>
+    <div class="desc">기간 내 관측된 고유 항공기 목록 + 메시지 수, 고도 범위, 평균 속도</div>
+    <pre onclick="copyTemplate(this)">최근 <span class="param">1</span>시간 내 고유 항공기 목록</pre>
+  </div>
+
+  <div class="template">
+    <h2>주간 트래픽</h2>
+    <div class="desc">일별 총 메시지 수, 고유 항공기 수, 평균/최대 고도, 평균 속도</div>
+    <pre onclick="copyTemplate(this)">최근 <span class="param">7</span>일 트래픽 요약</pre>
+  </div>
+
+  <div class="template">
+    <h2>가장 먼 항공기</h2>
+    <div class="desc">안테나 기준 Haversine 거리로 가장 먼 항공기</div>
+    <pre onclick="copyTemplate(this)">최근 <span class="param">24</span>시간 내 가장 먼 항공기 <span class="param">10</span>개</pre>
+  </div>
+
+  <div class="template">
+    <h2>항공기 검색</h2>
+    <div class="desc">특정 ICAO hex 코드로 위치 이력 추적</div>
+    <pre onclick="copyTemplate(this)"><span class="param">71BE07</span> 최근 <span class="param">24</span>시간 위치 이력</pre>
+  </div>
+
+  <div class="template">
+    <h2>항공기 정보 조회</h2>
+    <div class="desc">ICAO hex → 등록번호, 제조사, 기종, 운영사 (hexdb.io)</div>
+    <pre onclick="copyTemplate(this)"><span class="param">71BA12</span> 항공기 정보 알려줘</pre>
+  </div>
+
+  <div class="template">
+    <h2>날씨</h2>
+    <div class="desc">현재 날씨 + 3일 예보 (wttr.in)</div>
+    <pre onclick="copyTemplate(this)"><span class="param">Seoul</span> 날씨 알려줘</pre>
+  </div>
+
+  <hr>
+
+  <div class="template">
+    <h2>퀵 버튼 API 직접 호출</h2>
+    <div class="desc">curl로 직접 도구를 호출하는 예시 (LLM 없이 즉시 결과)</div>
+    <pre onclick="copyTemplate(this)"><span class="comment"># 최근 항공기</span>
+curl -s -X POST http://localhost:8095/api/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"recent_aircraft","args":{"minutes":<span class="param">30</span>,"limit":<span class="param">20</span>}}'</pre>
+  </div>
+
+  <div class="template">
+    <h2>고유 항공기 API</h2>
+    <pre onclick="copyTemplate(this)">curl -s -X POST http://localhost:8095/api/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"unique_aircraft","args":{"hours":<span class="param">1</span>}}'</pre>
+  </div>
+
+  <div class="template">
+    <h2>주간 트래픽 API</h2>
+    <pre onclick="copyTemplate(this)">curl -s -X POST http://localhost:8095/api/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"traffic_summary","args":{"days":<span class="param">7</span>}}'</pre>
+  </div>
+
+  <div class="template">
+    <h2>가장 먼 항공기 API</h2>
+    <pre onclick="copyTemplate(this)">curl -s -X POST http://localhost:8095/api/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"farthest_aircraft","args":{"hours":<span class="param">24</span>,"limit":<span class="param">10</span>}}'</pre>
+  </div>
+
+  <div class="template">
+    <h2>항공기 검색 API</h2>
+    <pre onclick="copyTemplate(this)">curl -s -X POST http://localhost:8095/api/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"search_aircraft","args":{"hex_ident":"<span class="param">71BE07</span>","hours":<span class="param">24</span>}}'</pre>
+  </div>
+
+  <div class="template">
+    <h2>항공기 정보 API</h2>
+    <pre onclick="copyTemplate(this)">curl -s -X POST http://localhost:8095/api/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"lookup_aircraft","args":{"hex_ident":"<span class="param">71BA12</span>"}}'</pre>
+  </div>
+
+  <div class="template">
+    <h2>날씨 API</h2>
+    <pre onclick="copyTemplate(this)">curl -s -X POST http://localhost:8095/api/tool \
+  -H "Content-Type: application/json" \
+  -d '{"name":"get_weather","args":{"location":"<span class="param">Seoul</span>"}}'</pre>
+  </div>
+
+  <script>
+    function copyTemplate(el) {
+      const text = el.textContent.replace('클릭하여 복사', '').replace('복사됨!', '').trim();
+      navigator.clipboard.writeText(text);
+      el.classList.add('copied');
+      setTimeout(() => el.classList.remove('copied'), 1500);
+    }
+  </script>
+</body>
+</html>
