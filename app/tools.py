@@ -547,6 +547,15 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
         url = args.get("url", "")
         if not url.startswith("http"):
             return "유효한 URL을 입력하세요 (http:// 또는 https://)"
+        # SSRF 방지: 내부 IP/호스트 차단
+        from urllib.parse import urlparse
+        hostname = urlparse(url).hostname or ""
+        _blocked = ("localhost", "127.", "10.", "192.168.", "172.16.", "172.17.",
+                     "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+                     "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
+                     "172.30.", "172.31.", "169.254.", "0.", "[::1]")
+        if any(hostname.startswith(b) or hostname == b.rstrip(".") for b in _blocked):
+            return "내부 네트워크 주소는 접근할 수 없습니다."
         try:
             resp = httpx.get(url, timeout=15, follow_redirects=True)
             content = resp.text[:3000]
