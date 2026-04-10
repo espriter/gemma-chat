@@ -28,11 +28,7 @@ input.addEventListener("input", () => {
   input.style.height = Math.min(input.scrollHeight, 120) + "px";
 });
 
-// 외부 접근 시 채팅 폼 숨김
-// debug: console.log("hostname:", window.location.hostname, "IS_EXTERNAL:", IS_EXTERNAL);
-if (IS_EXTERNAL) {
-  document.getElementById("chat-form").remove();
-}
+// 외부 접근 제한은 handleSend 내부의 IS_EXTERNAL alert으로 처리
 
 // Shift+Enter for newline, Enter to send
 input.addEventListener("keydown", (e) => {
