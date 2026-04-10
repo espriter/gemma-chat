@@ -38,7 +38,7 @@ input.addEventListener("keydown", (e) => {
 // Health check
 async function checkHealth() {
   try {
-    const res = await fetch("/api/health");
+    const res = await fetch("api/health");
     const data = await res.json();
     if (data.model_ready) {
       statusEl.textContent = data.backend || "online";
@@ -84,6 +84,15 @@ async function handleQuickstart(btn) {
     args.hex_ident = hex.trim().toUpperCase();
   }
 
+  if (tool === "reverse_geocode") {
+    const lat = prompt("위도 (lat):", "37.4");
+    if (!lat) return;
+    const lon = prompt("경도 (lon):", "127.0");
+    if (!lon) return;
+    args.lat = parseFloat(lat);
+    args.lon = parseFloat(lon);
+  }
+
   addMessage("user", `${btn.textContent}`);
 
   const resultDiv = document.createElement("div");
@@ -95,7 +104,7 @@ async function handleQuickstart(btn) {
   document.querySelectorAll(".qs-btn").forEach(b => b.disabled = true);
 
   try {
-    const res = await fetch("/api/tool", {
+    const res = await fetch("api/tool", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: tool, args }),
@@ -118,7 +127,7 @@ async function handleQuickstart(btn) {
       try {
         // 1단계: MiniPC에서 항공기 정보 + 지역명 보강
         const truncated = truncateResult(data.result, 10);
-        const enrichRes = await fetch("/api/enrich", {
+        const enrichRes = await fetch("api/enrich", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ result: truncated }),
@@ -184,7 +193,7 @@ async function handleGeoEnrich(result, parentDiv, btn) {
   for (let i = 0; i < coords.length; i++) {
     btn.textContent = `분석 중... (${i + 1}/${coords.length})`;
     try {
-      const res = await fetch("/api/tool", {
+      const res = await fetch("api/tool", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "reverse_geocode", args: { lat: coords[i].lat, lon: coords[i].lon } }),
@@ -283,7 +292,7 @@ async function handleSend(directText) {
   abortController = new AbortController();
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch("api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: chatHistory }),
