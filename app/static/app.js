@@ -265,7 +265,7 @@ async function handleSend(directText) {
 
   // GPU 미연결 시 경고
   if (statusEl.textContent === "Local") {
-    if (!confirm("GPU Desktop이 꺼져있어 로컬 모델로 처리됩니다. 5분 이상 걸릴 수 있습니다. 계속할까요?")) {
+    if (!confirm("GPU 미지원 상태라서 로컬 모델로 처리됩니다. 장시간 소요되고 타임아웃 될 수 있습니다. 계속할까요?")) {
       return;
     }
   }
