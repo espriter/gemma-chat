@@ -117,9 +117,9 @@ def _lookup_airline(hex_ident: str) -> str:
 
     _airline_cache[hex_ident] = (result, now)
 
-    # 캐시 크기 관리 (1000건 초과 시 가장 오래된 것 정리)
-    if len(_airline_cache) > 1000:
-        oldest = sorted(_airline_cache, key=lambda k: _airline_cache[k][1])[:200]
+    # 캐시 크기 관리 (10만건 초과 시 가장 오래된 것 정리)
+    if len(_airline_cache) > 100000:
+        oldest = sorted(_airline_cache, key=lambda k: _airline_cache[k][1])[:10000]
         for k in oldest:
             del _airline_cache[k]
 
