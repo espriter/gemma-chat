@@ -85,7 +85,7 @@ def _fmt_time(ts):
 
 
 _airline_cache: dict = {}  # {hex: (result, timestamp)}
-_AIRLINE_CACHE_TTL = 86400  # 24시간
+_AIRLINE_CACHE_TTL = 604800  # 7일
 
 
 def _lookup_airline(hex_ident: str) -> str:
