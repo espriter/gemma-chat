@@ -314,14 +314,27 @@ def _build_magic_packet(mac: str) -> bytes:
     return b"\xff" * 6 + mac_bytes * 16
 
 
+async def _systemctl(action: str, service: str):
+    """systemctl action을 실행 (start/stop)."""
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", "systemctl", action, service,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await asyncio.wait_for(proc.wait(), timeout=10)
+    return proc.returncode == 0
+
+
 @app.post("/api/wol")
 async def wake_on_lan():
-    """GPU Desktop에 Wake-on-LAN 매직 패킷 전송."""
+    """GPU Desktop에 Wake-on-LAN 매직 패킷 전송 + autossh 터널 시작."""
     try:
         packet = _build_magic_packet(GPU_DESKTOP_MAC)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.sendto(packet, (GPU_BROADCAST, WOL_PORT))
+        # autossh 터널 시작 (이미 실행 중이면 무시)
+        await _systemctl("start", "autossh-gpu-tunnel")
         return {"status": "sent", "mac": GPU_DESKTOP_MAC}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
@@ -329,8 +342,10 @@ async def wake_on_lan():
 
 @app.post("/api/wol/shutdown")
 async def shutdown_gpu():
-    """GPU Desktop을 SSH 경유로 원격 종료."""
+    """GPU Desktop 원격 종료 + autossh 터널 중지."""
     try:
+        # autossh 터널 먼저 중지 (재연결 반복 방지)
+        await _systemctl("stop", "autossh-gpu-tunnel")
         proc = await asyncio.create_subprocess_exec(
             "ssh", "-o", "ConnectTimeout=3", f"espriter@{GPU_DESKTOP_IP}",
             "shutdown", "/s", "/t", "5",
