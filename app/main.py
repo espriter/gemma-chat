@@ -1,5 +1,7 @@
 import os
 import asyncio
+import logging
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -15,6 +17,13 @@ MODEL_LOCAL = "qwen25-minipc"
 MODEL_GPU = "gemma4:e4b-it-q8_0"
 GPU_PROBE_TIMEOUT = 3  # GPU Desktop 접근 가능 여부 확인 타임아웃(초)
 SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK_URL", "")
+
+# --- Access Logger (외부 접근 기록) ---
+_access_logger = logging.getLogger("access")
+_access_logger.setLevel(logging.INFO)
+_access_handler = logging.FileHandler("/srv/gemma-chat/logs/access.log")
+_access_handler.setFormatter(logging.Formatter("%(message)s"))
+_access_logger.addHandler(_access_handler)
 
 # --- Rate Limiter (외부 접근용) ---
 RATE_LIMIT_MAX = 10       # 분당 최대 요청
@@ -59,6 +68,18 @@ async def _notify_slack(backend: str, user_msg: str, client_ip: str):
         pass  # 알림 실패해도 무시
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def log_external_access(request: Request, call_next):
+    """Cloudflare 경유 요청만 로깅 (IP, 국가, 경로)."""
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip and request.url.path != "/api/health":
+        country = request.headers.get("cf-ipcountry", "??")
+        ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        _access_logger.info(f"{ts} | {country} | {cf_ip} | {request.method} {request.url.path}")
+    return await call_next(request)
+
 
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
