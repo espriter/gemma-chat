@@ -263,6 +263,13 @@ async function handleSend(directText) {
   const text = directText || input.value.trim();
   if (!text || generating) return;
 
+  // GPU 미연결 시 경고
+  if (statusEl.textContent === "Local") {
+    if (!confirm("GPU Desktop이 꺼져있어 로컬 모델로 처리됩니다. 5분 이상 걸릴 수 있습니다. 계속할까요?")) {
+      return;
+    }
+  }
+
   input.value = "";
   input.style.height = "auto";
   addMessage("user", directText ? "(LLM 정리 요청)" : text);
