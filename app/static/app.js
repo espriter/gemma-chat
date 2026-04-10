@@ -298,7 +298,19 @@ async function handleSend(directText) {
       body: JSON.stringify({ messages: chatHistory }),
       signal: abortController.signal,
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (res.status === 524 || res.status === 522) {
+        data = { error: "Cloudflare 타임아웃 (100초). GPU Desktop이 꺼져있을 수 있습니다." };
+      } else if (res.status === 403) {
+        data = { error: "Cloudflare 차단 (403). 내부 네트워크에서 시도해주세요." };
+      } else {
+        data = { error: `응답 처리 실패 (HTTP ${res.status}). 내부 네트워크에서 시도해주세요.` };
+      }
+    }
 
     clearInterval(thinkingTimer);
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
