@@ -1,7 +1,7 @@
 direction: right
 
 title: {
-  label: Gemma Chat Architecture
+  label: ADS-B Chat Architecture
   near: top-center
   shape: text
   style.font-size: 24
@@ -16,12 +16,19 @@ user: {
   style.fill: "#e8f4fd"
 }
 
-# --- GPU Desktop (WSL2) ---
+cloudflare: {
+  label: "Cloudflare\nadsb.espriter.net"
+  shape: cloud
+  style.fill: "#f0f0f0"
+  style.stroke: "#f6821f"
+}
 
-gpu: {
-  label: GPU Host
-  style.fill: "#f5f5f5"
-  style.stroke: "#666"
+# --- MiniPC ---
+
+minipc: {
+  label: "MiniPC (항상 ON)"
+  style.fill: "#e8f5e9"
+  style.stroke: "#2e7d32"
   style.border-radius: 8
 
   fastapi: {
@@ -32,33 +39,62 @@ gpu: {
   }
 
   tools: {
-    label: "Tool Router\n(tools.py)"
+    label: "Tool Router\n(tools.py)\n8 tools"
     shape: hexagon
     style.fill: "#FF9800"
     style.font-color: white
   }
 
-  ollama: {
-    label: "Ollama\nport 11434"
+  enrich: {
+    label: "Enrich API\nhexdb.io\nNominatim"
+    shape: hexagon
+    style.fill: "#FF9800"
+    style.font-color: white
+  }
+
+  ollama_local: {
+    label: "Ollama Local\nqwen2.5:1.5b\n(fallback)"
+    shape: rectangle
+    style.fill: "#78909C"
+    style.font-color: white
+  }
+
+  tunnel: {
+    label: "SSH Tunnel\n:11435→:11434"
+    shape: diamond
+    style.fill: "#455A64"
+    style.font-color: white
+  }
+}
+
+# --- GPU Desktop ---
+
+gpu: {
+  label: "GPU Desktop (WOL ON/OFF)"
+  style.fill: "#e3f2fd"
+  style.stroke: "#1565c0"
+  style.border-radius: 8
+
+  ollama_gpu: {
+    label: "Ollama\ngemma4:e4b-it-q8_0\nRTX 5070 Ti"
     shape: rectangle
     style.fill: "#2196F3"
     style.font-color: white
   }
 
-  gemma: {
-    label: "Gemma 4 E4B\nGPU VRAM"
-    shape: cylinder
-    style.fill: "#9C27B0"
-    style.font-color: white
+  note: {
+    label: "모델 서빙만\n서비스 코드 없음"
+    shape: text
+    style.font-size: 12
+    style.font-color: "#666"
+    style.italic: true
   }
-
-  ollama -> gemma: inference
 }
 
 # --- RPI4 ---
 
 rpi4: {
-  label: DB Host
+  label: "RPI4 (DB Host)"
   style.fill: "#fff3e0"
   style.stroke: "#e65100"
   style.border-radius: 8
@@ -69,58 +105,93 @@ rpi4: {
     style.fill: "#e65100"
     style.font-color: white
   }
+}
 
-  readsb: {
-    label: "readsb\n(ADS-B 수신기)"
+# --- External APIs ---
+
+external: {
+  label: "External APIs"
+  style.fill: "#fce4ec"
+  style.stroke: "#c62828"
+  style.border-radius: 8
+
+  hexdb: {
+    label: "hexdb.io\n(aircraft info)"
     shape: rectangle
-    style.fill: "#ff8f00"
+    style.fill: "#ef5350"
     style.font-color: white
   }
 
-  readsb -> postgres: "~3M rows/day"
+  wttr: {
+    label: "wttr.in\n(weather)"
+    shape: rectangle
+    style.fill: "#ef5350"
+    style.font-color: white
+  }
+
+  nominatim: {
+    label: "Nominatim\n(geocoding)"
+    shape: rectangle
+    style.fill: "#ef5350"
+    style.font-color: white
+  }
 }
 
 # --- Flows ---
 
-# Normal chat flow
-user -> gpu.fastapi: "HTTP SSE" {
+# User → Cloudflare → MiniPC
+user -> cloudflare: "HTTPS" {
+  style.stroke: "#f6821f"
+}
+
+cloudflare -> minipc.fastapi: "tunnel" {
+  style.stroke: "#f6821f"
+}
+
+# Direct access
+user -> minipc.fastapi: "HTTP :8095\n(내부)" {
   style.stroke: "#4CAF50"
-}
-
-gpu.fastapi -> gpu.ollama: "1. /api/chat\n+ tool defs" {
-  style.stroke: "#2196F3"
-}
-
-# Tool calling flow
-gpu.ollama -> gpu.fastapi: "2. tool_calls\n(if DB needed)" {
-  style.stroke: "#FF9800"
   style.stroke-dash: 3
 }
 
-gpu.fastapi -> gpu.tools: "3. execute" {
+# Quickstart flow (no LLM)
+minipc.fastapi -> minipc.tools: "/api/tool\n(quickstart)" {
   style.stroke: "#FF9800"
 }
 
-gpu.tools -> rpi4.postgres: "4. SELECT\n(read-only)" {
+minipc.tools -> rpi4.postgres: "SELECT\n(read-only)" {
   style.stroke: "#e65100"
 }
 
-rpi4.postgres -> gpu.tools: "5. result" {
-  style.stroke: "#e65100"
-  style.stroke-dash: 3
-}
-
-gpu.tools -> gpu.fastapi: "6. tool result" {
+# Enrich flow
+minipc.fastapi -> minipc.enrich: "/api/enrich" {
   style.stroke: "#FF9800"
-  style.stroke-dash: 3
 }
 
-gpu.fastapi -> gpu.ollama: "7. messages\n+ tool result" {
+minipc.enrich -> external.hexdb: "aircraft lookup" {
+  style.stroke: "#c62828"
+}
+
+minipc.enrich -> external.nominatim: "reverse geocode" {
+  style.stroke: "#c62828"
+}
+
+# LLM flow — GPU first
+minipc.fastapi -> minipc.tunnel: "/api/chat\n(GPU 우선)" {
   style.stroke: "#2196F3"
+}
+
+minipc.tunnel -> gpu.ollama_gpu: "SSH tunnel" {
+  style.stroke: "#2196F3"
+}
+
+# LLM fallback — Local
+minipc.fastapi -> minipc.ollama_local: "/api/chat\n(fallback)" {
+  style.stroke: "#78909C"
   style.stroke-dash: 3
 }
 
-gpu.ollama -> gpu.fastapi: "8. final answer\n(streaming)" {
-  style.stroke: "#4CAF50"
-  style.stroke-dash: 3
+# Weather
+minipc.tools -> external.wttr: "weather" {
+  style.stroke: "#c62828"
 }

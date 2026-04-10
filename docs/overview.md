@@ -1,6 +1,6 @@
-# Gemma Chat
+# ADS-B Chat
 
-로컬 LLM(Gemma 4)과 대화하면서 ADS-B 항공기 데이터를 실시간 조회할 수 있는 채팅 웹앱.
+ADS-B 항공기 데이터를 퀵스타트 버튼으로 즉시 조회하고, GPU Desktop LLM(gemma4:e4b-it-q8_0)으로 요약/대화하는 웹앱. MiniPC(CPU-only)에서 서비스, GPU Desktop은 모델 서빙만.
 
 > Built with Claude Code (vibe coding) — 대화형 AI 페어 프로그래밍으로 설계부터 구현까지 완성.
 
