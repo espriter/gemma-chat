@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import asyncio
 from pathlib import Path
@@ -15,6 +16,17 @@ OLLAMA_GPU = "http://localhost:11435"  # SSH tunnel → GPU Desktop WSL Ollama
 MODEL_LOCAL = "qwen25-minipc"
 MODEL_GPU = "gemma4:e4b-it-q8_0"
 GPU_PROBE_TIMEOUT = 3  # GPU Desktop 접근 가능 여부 확인 타임아웃(초)
+SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK_URL", "")
+
+
+async def _notify_slack(backend: str, user_msg: str, client_ip: str):
+    """LLM 요청 시 Slack 알림 (fire-and-forget)."""
+    try:
+        text = f":robot_face: *ADS-B Chat LLM 요청*\n>*Backend:* `{backend}`\n>*IP:* `{client_ip}`\n>*내용:* {user_msg[:200]}"
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(SLACK_WEBHOOK, json={"text": text})
+    except Exception:
+        pass  # 알림 실패해도 무시
 
 app = FastAPI()
 
@@ -59,9 +71,12 @@ async def chat(request: Request):
     """LLM chat — GPU Desktop 우선, 실패 시 로컬 fallback."""
     body = await request.json()
     messages = body.get("messages", [])
+    client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip") or request.client.host
+    user_msg = messages[-1].get("content", "") if messages else ""
 
     # 1차: GPU Desktop 시도
     if await _probe_gpu():
+        asyncio.create_task(_notify_slack("GPU", user_msg, client_ip))
         try:
             payload = {"model": MODEL_GPU, "messages": messages, "stream": False}
             async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
@@ -74,6 +89,7 @@ async def chat(request: Request):
             pass  # GPU 실패 → 로컬 fallback
 
     # 2차: 로컬 MiniPC
+    asyncio.create_task(_notify_slack("Local", user_msg, client_ip))
     try:
         payload = {"model": MODEL_LOCAL, "messages": messages, "stream": False}
         async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
