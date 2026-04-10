@@ -120,7 +120,7 @@ async function handleQuickstart(btn) {
 
     const summarizeBtn = document.createElement("button");
     summarizeBtn.className = "action-btn";
-    summarizeBtn.textContent = "LLM 정리";
+    summarizeBtn.textContent = "LLM 정리 (내부전용)";
     summarizeBtn.addEventListener("click", async () => {
       summarizeBtn.textContent = "보강 중...";
       summarizeBtn.disabled = true;
