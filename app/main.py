@@ -66,11 +66,27 @@ def _build_stats(data: dict, backend: str) -> dict:
     }
 
 
+SYSTEM_PROMPT = {
+    "role": "system",
+    "content": (
+        "너는 ADS-B Chat 어시스턴트야. 이 앱에는 퀵스타트 버튼이 있어서 사용자가 직접 데이터를 조회할 수 있어. "
+        "사용 가능한 도구: 최근 항공기, 항공기 검색(hex_ident 이력), 주간 트래픽, 가장 먼 항공기, "
+        "항공기 정보(hex → 등록번호/기종/항공사, hexdb.io), 날씨, 역지오코딩. "
+        "사용자가 특정 항공기 정보를 물으면 '항공기 정보' 버튼으로 hex 코드를 검색하라고 안내해. "
+        "데이터 조회가 필요한 질문에는 적절한 퀵스타트 버튼을 안내해줘. "
+        "한국어로 답변해."
+    ),
+}
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     """LLM chat — GPU Desktop 우선, 실패 시 로컬 fallback."""
     body = await request.json()
     messages = body.get("messages", [])
+    # 시스템 프롬프트가 없으면 맨 앞에 추가
+    if not messages or messages[0].get("role") != "system":
+        messages = [SYSTEM_PROMPT] + messages
     client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip") or request.client.host
     user_msg = messages[-1].get("content", "") if messages else ""
 
