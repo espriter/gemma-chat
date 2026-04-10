@@ -92,7 +92,7 @@
   <div class="template">
     <h2>최근 항공기</h2>
     <div class="desc">최근 N분 내 고유 항공기 last 위치 (KST 테이블)</div>
-    <pre onclick="copyTemplate(this)">최근 <span class="param">60</span>분 내 항공기 <span class="param">20</span>개 보여줘</pre>
+    <pre onclick="copyTemplate(this)">최근 <span class="param">60</span>분 내 항공기 <span class="param">10</span>개 보여줘</pre>
   </div>
 
   <div class="template">
@@ -147,7 +147,7 @@
     <h2>최근 항공기</h2>
     <pre onclick="copyTemplate(this)">curl -s -X POST http://localhost:8095/api/tool \
   -H "Content-Type: application/json" \
-  -d '{"name":"recent_aircraft","args":{"minutes":<span class="param">60</span>,"limit":<span class="param">20</span>}}'</pre>
+  -d '{"name":"recent_aircraft","args":{"minutes":<span class="param">60</span>,"limit":<span class="param">10</span>}}'</pre>
   </div>
 
   <div class="template">
