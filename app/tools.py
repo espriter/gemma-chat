@@ -84,20 +84,46 @@ def _fmt_time(ts):
     return s[:5]
 
 
+_airline_cache: dict = {}  # {hex: (result, timestamp)}
+_AIRLINE_CACHE_TTL = 86400  # 24시간
+
+
 def _lookup_airline(hex_ident: str) -> str:
-    """hexdb.io에서 항공사/기종 간략 조회. 실패 시 빈 문자열."""
+    """hexdb.io에서 항공사/기종 간략 조회. 24시간 캐싱. 실패 시 빈 문자열."""
+    import time
+    now = time.time()
+
+    # 캐시 히트
+    if hex_ident in _airline_cache:
+        result, ts = _airline_cache[hex_ident]
+        if now - ts < _AIRLINE_CACHE_TTL:
+            return result
+
+    # API 호출
     try:
         resp = httpx.get(f"https://hexdb.io/api/v1/aircraft/{hex_ident}", timeout=5)
         data = resp.json()
         if data.get("status") == "404":
-            return ""
-        owner = data.get("RegisteredOwners", "")
-        typ = data.get("Type", "")
-        if owner and typ:
-            return f"{owner}, {typ}"
-        return owner or typ or ""
+            result = ""
+        else:
+            owner = data.get("RegisteredOwners", "")
+            typ = data.get("Type", "")
+            if owner and typ:
+                result = f"{owner}, {typ}"
+            else:
+                result = owner or typ or ""
     except Exception:
-        return ""
+        result = ""
+
+    _airline_cache[hex_ident] = (result, now)
+
+    # 캐시 크기 관리 (1000건 초과 시 가장 오래된 것 정리)
+    if len(_airline_cache) > 1000:
+        oldest = sorted(_airline_cache, key=lambda k: _airline_cache[k][1])[:200]
+        for k in oldest:
+            del _airline_cache[k]
+
+    return result
 
 
 # --- Tool implementations ---
