@@ -26,7 +26,7 @@ ANTENNA_LON = 127.0
 MAX_ROWS = 500
 
 
-def _execute_query(sql: str, as_dicts: bool = False):
+def _execute_query(sql: str, params: tuple = None, as_dicts: bool = False):
     sql_upper = sql.upper()
     for kw in BLOCKED_KEYWORDS:
         if kw in sql_upper:
@@ -38,7 +38,7 @@ def _execute_query(sql: str, as_dicts: bool = False):
         conn.set_session(readonly=True, autocommit=True)
         cur = conn.cursor()
         cur.execute("SET statement_timeout = '60s'")
-        cur.execute(sql)
+        cur.execute(sql, params)
         cols = [d[0] for d in cur.description] if cur.description else []
         rows = cur.fetchmany(MAX_ROWS)
         cur.close()
@@ -145,7 +145,7 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
     if name == "search_aircraft":
         hex_ident = args.get("hex_ident", "").strip().upper()
         hours = args.get("hours", 24)
-        sql = f"""
+        sql = """
             SELECT hex_ident,
                    DATE_TRUNC('hour', date_generated + time_generated + INTERVAL '9 hours')
                      + INTERVAL '10 min' * FLOOR(EXTRACT(MINUTE FROM date_generated + time_generated) / 10)
@@ -157,14 +157,15 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
                    (ARRAY_AGG(is_on_ground ORDER BY date_generated DESC, time_generated DESC))[1] AS is_on_ground,
                    COUNT(*) AS msg_count
             FROM adsb_message
-            WHERE hex_ident = '{hex_ident}'
-              AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
+            WHERE hex_ident = %s
+              AND (date_generated + time_generated) >= (NOW() - %s * INTERVAL '1 hour')
             GROUP BY hex_ident, time_slot_kst
             ORDER BY time_slot_kst DESC
             LIMIT 6
         """
+        params = (hex_ident, int(hours))
         if pretty:
-            rows, err = _execute_query(sql, as_dicts=True)
+            rows, err = _execute_query(sql, params=params, as_dicts=True)
             if err:
                 return err
             if not rows:
@@ -184,7 +185,7 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
                 note = "지상" if r.get("is_on_ground") else ""
                 lines.append(f"| {slot} | {alt} | {spd} | {lat} | {lon} | {cnt} | {note} |")
             return "\n".join(lines)
-        return _execute_query(sql)
+        return _execute_query(sql, params=params)
 
     if name == "unique_aircraft":
         hours = args.get("hours", 24)
@@ -373,23 +374,21 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
         hours = args.get("hours", 24)
         limit = min(args.get("limit", 20), 100)
         return _execute_query(f"""
-            SELECT hex_ident, latitude, longitude, altitude, ground_speed,
-                   date_generated, time_generated,
-                   ROUND(
-                     (6371 * ACOS(
-                       COS(RADIANS({float(lat)})) * COS(RADIANS(latitude))
-                       * COS(RADIANS(longitude) - RADIANS({float(lon)}))
-                       + SIN(RADIANS({float(lat)})) * SIN(RADIANS(latitude))
-                     ))::numeric, 2
-                   ) AS distance_km
-            FROM adsb_message
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-              AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
-            HAVING (6371 * ACOS(
-                       COS(RADIANS({float(lat)})) * COS(RADIANS(latitude))
-                       * COS(RADIANS(longitude) - RADIANS({float(lon)}))
-                       + SIN(RADIANS({float(lat)})) * SIN(RADIANS(latitude))
-                     )) <= {float(radius_km)}
+            SELECT * FROM (
+                SELECT hex_ident, latitude, longitude, altitude, ground_speed,
+                       date_generated, time_generated,
+                       ROUND(
+                         (6371 * ACOS(
+                           COS(RADIANS({float(lat)})) * COS(RADIANS(latitude))
+                           * COS(RADIANS(longitude) - RADIANS({float(lon)}))
+                           + SIN(RADIANS({float(lat)})) * SIN(RADIANS(latitude))
+                         ))::numeric, 2
+                       ) AS distance_km
+                FROM adsb_message
+                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                  AND (date_generated + time_generated) >= (NOW() - {int(hours)} * INTERVAL '1 hour')
+            ) sub
+            WHERE distance_km <= {float(radius_km)}
             ORDER BY distance_km ASC
             LIMIT {int(limit)}
         """)

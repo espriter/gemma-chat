@@ -1,12 +1,10 @@
-import json
 import os
-import socket
 import asyncio
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.tools import execute_tool, TOOL_DEFINITIONS
@@ -324,7 +322,6 @@ async def enrich(request: Request):
 
     # Reverse geocode (1 req/sec rate limit, max 5)
     if coords:
-        import time
         enrichments.append("\n**위치 정보:**")
         seen = set()
         for lat, lon in coords[:5]:
@@ -335,80 +332,13 @@ async def enrich(request: Request):
             geo = execute_tool("reverse_geocode", {"lat": lat, "lon": lon})
             first_line = geo.split("\n")[0].replace("**", "")
             enrichments.append(f"- ({lat}, {lon}) → {first_line}")
-            time.sleep(1.1)
+            await asyncio.sleep(1.1)
 
     enriched = result + "\n\n---\n" + "\n".join(enrichments) if enrichments else result
     return {"enriched": enriched}
 
 
-# --- Wake-on-LAN ---
-GPU_DESKTOP_IP = "192.168.12.32"
-GPU_DESKTOP_MAC = "34:5a:60:6c:00:74"
-GPU_BROADCAST = "192.168.12.255"
-WOL_PORT = 9
-
-
-def _build_magic_packet(mac: str) -> bytes:
-    """FF FF FF FF FF FF + MAC 16번 반복 (총 102바이트)"""
-    mac_bytes = bytes.fromhex(mac.replace(":", "").replace("-", ""))
-    return b"\xff" * 6 + mac_bytes * 16
-
-
-async def _systemctl(action: str, service: str):
-    """systemctl action을 실행 (start/stop)."""
-    proc = await asyncio.create_subprocess_exec(
-        "sudo", "systemctl", action, service,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    await asyncio.wait_for(proc.wait(), timeout=10)
-    return proc.returncode == 0
-
-
-@app.post("/api/wol")
-async def wake_on_lan():
-    """GPU Desktop에 Wake-on-LAN 매직 패킷 전송 + autossh 터널 시작."""
-    try:
-        packet = _build_magic_packet(GPU_DESKTOP_MAC)
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.sendto(packet, (GPU_BROADCAST, WOL_PORT))
-        # autossh 터널 시작 (이미 실행 중이면 무시)
-        await _systemctl("start", "autossh-gpu-tunnel")
-        return {"status": "sent", "mac": GPU_DESKTOP_MAC}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
-
-
-@app.post("/api/wol/shutdown")
-async def shutdown_gpu():
-    """GPU Desktop 원격 종료 + autossh 터널 중지."""
-    try:
-        # autossh 터널 먼저 중지 (재연결 반복 방지)
-        await _systemctl("stop", "autossh-gpu-tunnel")
-        proc = await asyncio.create_subprocess_exec(
-            "ssh", "-o", "ConnectTimeout=3", f"espriter@{GPU_DESKTOP_IP}",
-            "shutdown", "/s", "/t", "5",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.wait(), timeout=10)
-        return {"status": "shutdown_sent"}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
-
-
-@app.get("/api/wol/status")
-async def wol_status():
-    """GPU Desktop 상태 체크 (SSH 포트 22 접근으로 판단)."""
-    try:
-        conn = asyncio.open_connection(GPU_DESKTOP_IP, 22)
-        reader, writer = await asyncio.wait_for(conn, timeout=2)
-        writer.close()
-        await writer.wait_closed()
-        return {"status": "online", "ip": GPU_DESKTOP_IP}
-    except Exception:
-        return {"status": "offline", "ip": GPU_DESKTOP_IP}
+# --- WOL API는 /srv/wol/server.py로 분리됨 (port 8096) ---
 
 
 @app.get("/api/health")
