@@ -944,14 +944,50 @@ header h1::before {
     padding: 0 20px;
   }
 
+  /* Desktop: quickstart 버튼들 + LLM 토글을 한 줄에 배치 */
+  #toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+  }
+
   #quickstart {
-    grid-template-columns: repeat(3, 1fr);
-    padding: 16px 20px 12px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    flex: 1 1 auto;
+    gap: 8px;
+    padding: 0;
+  }
+
+  .qs-btn {
+    padding: 8px 10px;
+    min-height: 40px;
+    font-size: 13px;
+    gap: 6px;
+  }
+
+  .qs-btn .qs-icon {
+    font-size: 15px;
+    width: 18px;
   }
 
   #llm-toggle {
-    width: calc(100% - 40px);
-    margin: 0 20px 16px;
+    width: auto;
+    margin: 0;
+    padding: 8px 16px;
+    min-height: 40px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  #chat-form {
+    flex: 0 0 100%;
+    margin-top: 4px;
+    border-top: none;
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    border: 1px solid var(--border-default);
   }
 
   #messages {
