@@ -196,7 +196,10 @@ header h1::before {
   background: var(--bg-base);
 }
 
-#map-view[hidden] {
+/* [hidden] 오버라이드 — #messages의 display:block, #toolbar 기본 display 강제 차단 */
+#map-view[hidden],
+#messages[hidden],
+#toolbar[hidden] {
   display: none !important;
 }
 
@@ -210,12 +213,16 @@ header h1::before {
 
 .map-attribution {
   flex-shrink: 0;
-  padding: 6px 12px;
+  padding: 8px 12px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border-subtle);
   font-size: 11px;
   color: var(--text-muted);
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .map-attribution a {
@@ -227,6 +234,32 @@ header h1::before {
 .map-attribution a:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.map-link-btn {
+  padding: 3px 10px;
+  min-height: 24px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--t), background var(--t), border-color var(--t);
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+.map-link-btn:hover {
+  background: var(--accent-muted);
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.map-link-btn:active {
+  transform: scale(0.96);
 }
 
 .header-link {

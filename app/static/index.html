@@ -26,10 +26,12 @@
     <div id="map-view" hidden>
       <iframe id="map-frame"
               referrerpolicy="no-referrer"
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+              allow="geolocation; fullscreen"
               title="ADSBexchange Global Map"></iframe>
       <div class="map-attribution">
-        Powered by <a href="https://globe.adsbexchange.com/" target="_blank" rel="noopener">ADSBexchange</a>
+        <span>Powered by <a href="https://globe.adsbexchange.com/" target="_blank" rel="noopener">ADSBexchange</a></span>
+        <button type="button" id="map-open-new" class="map-link-btn">새 창으로 열기 ↗</button>
+        <button type="button" id="map-reload" class="map-link-btn">↻ 다시 로드</button>
       </div>
     </div>
 

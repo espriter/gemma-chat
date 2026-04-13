@@ -36,6 +36,19 @@ function switchView(view) {
 
 tabs.forEach(t => t.addEventListener("click", () => switchView(t.dataset.view)));
 
+// 새 창으로 열기 — 403/차단 시 fallback
+document.getElementById("map-open-new").addEventListener("click", () => {
+  window.open(MAP_SRC, "_blank", "noopener");
+});
+
+// 다시 로드 — iframe src를 한번 비웠다가 재설정 (캐시 우회)
+document.getElementById("map-reload").addEventListener("click", () => {
+  mapFrame.src = "about:blank";
+  setTimeout(() => {
+    mapFrame.src = MAP_SRC + "&_t=" + Date.now();
+  }, 100);
+});
+
 let chatHistory = [];
 let generating = false;
 let abortController = null;
