@@ -11,9 +11,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.tools import execute_tool, TOOL_DEFINITIONS
 
-OLLAMA_LOCAL = "http://localhost:11434"
 OLLAMA_GPU = "http://localhost:11435"  # SSH tunnel → GPU Desktop WSL Ollama
-MODEL_LOCAL = "qwen25-minipc"
+# GPU 전용: 미니PC CPU 추론은 실용 속도가 안 나와 로컬 fallback 제거됨(2026-04-13)
+# 더 빠른 모델을 쓰려면 GPU Desktop에서 `ollama pull qwen3:8b` 후 아래 값 변경
 MODEL_GPU = "gemma4:e4b-it-q8_0"
 GPU_PROBE_TIMEOUT = 3  # GPU Desktop 접근 가능 여부 확인 타임아웃(초)
 SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK_URL", "")
@@ -90,9 +90,8 @@ async def index():
     return (static_dir / "index.html").read_text()
 
 
-# --- LLM Chat Mode (GPU fallback → Local) ---
-# 1차: GPU Desktop Ollama (SSH 터널, localhost:11435) 시도
-# 2차: 로컬 MiniPC Ollama (localhost:11434) fallback
+# --- LLM Chat Mode (GPU 전용) ---
+# GPU Desktop Ollama (SSH 터널, localhost:11435). GPU 꺼져있으면 즉시 에러 응답.
 CHAT_TIMEOUT = 600
 
 
@@ -130,16 +129,6 @@ SYSTEM_PROMPT_GPU = {
     ),
 }
 
-# Local 모드: 간결한 안내만, auto_enrich 비활성 (프롬프트 절약)
-SYSTEM_PROMPT_LOCAL = {
-    "role": "system",
-    "content": (
-        "너는 ADS-B Chat 안내 봇이야. 짧게 답변해. "
-        "데이터 조회가 필요하면 퀵스타트 버튼(최근 항공기, 항공기 정보, 항공기 최근 정보, 날씨 등)을 안내해. "
-        "한국어로 2~3문장 이내로 답변해."
-    ),
-}
-
 # hex 코드 패턴 (6자리 hex, 대소문자)
 HEX_PATTERN = re.compile(r'\b([0-9A-Fa-f]{6})\b')
 # 좌표 패턴 (lat, lon)
@@ -173,7 +162,7 @@ def _auto_enrich_message(text: str) -> str:
 
 @app.post("/api/chat")
 async def chat(request: Request):
-    """LLM chat — GPU Desktop 우선, 실패 시 로컬 fallback."""
+    """LLM chat — GPU Desktop 전용. GPU 꺼져있으면 에러 반환."""
     body = await request.json()
     messages = body.get("messages", [])
     client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip") or request.client.host
@@ -186,67 +175,57 @@ async def chat(request: Request):
     gpu_available = await _probe_gpu()
     user_msg = messages[-1].get("content", "") if messages else ""
 
-    # === GPU 모드: tool calling 활성 ===
-    if gpu_available:
-        if not messages or messages[0].get("role") != "system":
-            messages = [SYSTEM_PROMPT_GPU] + messages
+    # GPU 꺼져있으면 즉시 에러 (로컬 fallback 없음)
+    if not gpu_available:
+        return {
+            "error": "GPU Desktop이 꺼져있어 대화 모드를 쓸 수 없습니다. "
+                     "Quickstart 버튼으로 데이터 조회는 가능합니다. "
+                     "LLM 대화가 필요하면 GPU를 켜주세요."
+        }
 
-        asyncio.create_task(_notify_slack("GPU", user_msg, client_ip))
-        try:
-            async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
-                # Phase 1: tool calling (non-streaming)
-                payload = {"model": MODEL_GPU, "messages": messages, "tools": TOOL_DEFINITIONS, "stream": False}
-                resp = await client.post(f"{OLLAMA_GPU}/api/chat", json=payload)
-                data = resp.json()
-
-                if "error" in data:
-                    pass  # GPU 에러 → fallback
-                else:
-                    msg = data.get("message", {})
-                    tool_calls = msg.get("tool_calls")
-
-                    if tool_calls:
-                        # 도구 실행 (MiniPC에서 로컬 실행)
-                        messages.append(msg)
-                        for tc in tool_calls:
-                            fn = tc.get("function", {})
-                            name = fn.get("name", "")
-                            args = fn.get("arguments", {})
-                            result = execute_tool(name, args)
-                            messages.append({"role": "tool", "content": result})
-
-                        # Phase 2: 도구 결과로 최종 응답
-                        payload2 = {"model": MODEL_GPU, "messages": messages, "stream": False}
-                        resp2 = await client.post(f"{OLLAMA_GPU}/api/chat", json=payload2)
-                        data2 = resp2.json()
-                        if "error" not in data2:
-                            content = data2.get("message", {}).get("content", "")
-                            return {"content": content, "stats": _build_stats(data2, "GPU")}
-                    else:
-                        # tool call 없이 직접 응답
-                        content = msg.get("content", "")
-                        return {"content": content, "stats": _build_stats(data, "GPU")}
-        except Exception:
-            pass  # GPU 실패 → 로컬 fallback
-
-    # === Local 모드: 도구 없이 간결 안내만 ===
     if not messages or messages[0].get("role") != "system":
-        messages = [SYSTEM_PROMPT_LOCAL] + messages
+        messages = [SYSTEM_PROMPT_GPU] + messages
 
-    asyncio.create_task(_notify_slack("Local", user_msg, client_ip))
+    asyncio.create_task(_notify_slack("GPU", user_msg, client_ip))
     try:
-        payload = {"model": MODEL_LOCAL, "messages": messages, "stream": False}
         async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
-            resp = await client.post(f"{OLLAMA_LOCAL}/api/chat", json=payload)
+            # Phase 1: tool calling (non-streaming)
+            payload = {"model": MODEL_GPU, "messages": messages, "tools": TOOL_DEFINITIONS, "stream": False}
+            resp = await client.post(f"{OLLAMA_GPU}/api/chat", json=payload)
             data = resp.json()
+
             if "error" in data:
-                return {"error": data["error"]}
-            content = data.get("message", {}).get("content", "")
-            return {"content": content, "stats": _build_stats(data, "Local")}
+                return {"error": f"GPU 모델 에러: {data['error']}"}
+
+            msg = data.get("message", {})
+            tool_calls = msg.get("tool_calls")
+
+            if tool_calls:
+                # 도구 실행 (MiniPC에서 로컬 실행)
+                messages.append(msg)
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    name = fn.get("name", "")
+                    args = fn.get("arguments", {})
+                    result = execute_tool(name, args)
+                    messages.append({"role": "tool", "content": result})
+
+                # Phase 2: 도구 결과로 최종 응답
+                payload2 = {"model": MODEL_GPU, "messages": messages, "stream": False}
+                resp2 = await client.post(f"{OLLAMA_GPU}/api/chat", json=payload2)
+                data2 = resp2.json()
+                if "error" in data2:
+                    return {"error": f"GPU 모델 에러(phase2): {data2['error']}"}
+                content = data2.get("message", {}).get("content", "")
+                return {"content": content, "stats": _build_stats(data2, "GPU")}
+            else:
+                # tool call 없이 직접 응답
+                content = msg.get("content", "")
+                return {"content": content, "stats": _build_stats(data, "GPU")}
     except httpx.ReadTimeout:
         return {"error": f"응답 시간 초과 ({CHAT_TIMEOUT}초). 질문을 짧게 해보세요."}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"GPU 요청 실패: {e}"}
 
 
 # --- Streaming version (주석 해제하면 스트리밍 모드로 전환) ---
@@ -364,17 +343,11 @@ async def enrich(request: Request):
 
 @app.get("/api/health")
 async def health():
+    """GPU Desktop 상태만 확인. 꺼져있으면 LLM 불가, Quickstart만 가능."""
     gpu_ok = await _probe_gpu()
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{OLLAMA_LOCAL}/api/tags")
-            models = resp.json().get("models", [])
-            local_ready = any(MODEL_LOCAL in m.get("name", "") for m in models)
-            return {
-                "ollama": True,
-                "model_ready": local_ready or gpu_ok,
-                "model": MODEL_GPU if gpu_ok else MODEL_LOCAL,
-                "backend": "GPU" if gpu_ok else "Local",
-            }
-    except Exception:
-        return {"ollama": gpu_ok, "model_ready": gpu_ok, "model": MODEL_GPU if gpu_ok else MODEL_LOCAL, "backend": "GPU" if gpu_ok else "offline"}
+    return {
+        "ollama": gpu_ok,
+        "model_ready": gpu_ok,
+        "model": MODEL_GPU if gpu_ok else None,
+        "backend": "GPU" if gpu_ok else "offline",
+    }

@@ -39,23 +39,33 @@ input.addEventListener("keydown", (e) => {
 });
 
 // Health check
+let gpuReady = false;
 async function checkHealth() {
   try {
     const res = await fetch("api/health");
     const data = await res.json();
     if (data.model_ready) {
-      statusEl.textContent = data.backend || "online";
+      gpuReady = true;
+      statusEl.textContent = "GPU";
       statusEl.className = "status online";
-    } else if (data.ollama) {
-      statusEl.textContent = "loading";
-      statusEl.className = "status loading";
+      input.placeholder = "AI에게 질문하기...";
+      input.disabled = false;
+      sendBtn.disabled = false;
     } else {
-      statusEl.textContent = "offline";
+      gpuReady = false;
+      statusEl.textContent = "GPU off";
       statusEl.className = "status offline";
+      input.placeholder = "GPU Desktop이 꺼져있어 대화 불가. Quickstart 버튼을 사용하세요.";
+      input.disabled = true;
+      sendBtn.disabled = true;
     }
   } catch {
+    gpuReady = false;
     statusEl.textContent = "offline";
     statusEl.className = "status offline";
+    input.placeholder = "서버 연결 실패";
+    input.disabled = true;
+    sendBtn.disabled = true;
   }
 }
 
@@ -263,11 +273,10 @@ async function handleSend(directText) {
     return;
   }
 
-  // GPU 미연결 시 경고
-  if (statusEl.textContent === "Local") {
-    if (!confirm("GPU 미지원 상태라서 로컬 모델로 처리됩니다. 장시간 소요되고 타임아웃 될 수 있습니다. 계속할까요?")) {
-      return;
-    }
+  // GPU 미연결 시 차단 (로컬 모드 제거됨)
+  if (!gpuReady) {
+    alert("GPU Desktop이 꺼져있어 대화 모드를 쓸 수 없습니다. Quickstart 버튼으로 데이터 조회는 가능합니다.");
+    return;
   }
 
   input.value = "";
