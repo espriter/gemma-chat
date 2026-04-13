@@ -13,8 +13,9 @@ from app.tools import execute_tool, TOOL_DEFINITIONS
 
 OLLAMA_GPU = "http://localhost:11435"  # SSH tunnel → GPU Desktop WSL Ollama
 # GPU 전용: 미니PC CPU 추론은 실용 속도가 안 나와 로컬 fallback 제거됨(2026-04-13)
-# 더 빠른 모델을 쓰려면 GPU Desktop에서 `ollama pull qwen3:8b` 후 아래 값 변경
-MODEL_GPU = "gemma4:e4b-it-q8_0"
+# Qwen3 8B (Q4_K_M, ~5GB): warm 응답 ~4초, 141 tok/s. Tool calling 지원.
+# 이전: gemma4:e4b-it-q8_0 (11GB, ~30초) — 속도 개선을 위해 교체(2026-04-13)
+MODEL_GPU = "qwen3:8b"
 GPU_PROBE_TIMEOUT = 3  # GPU Desktop 접근 가능 여부 확인 타임아웃(초)
 SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK_URL", "")
 
@@ -120,9 +121,11 @@ import re
 import time as _time
 
 # GPU 모드: 풍부한 분석, auto_enrich 활성
+# /no_think: Qwen3의 기본 thinking 모드를 비활성화하여 응답 지연 최소화
 SYSTEM_PROMPT_GPU = {
     "role": "system",
     "content": (
+        "/no_think\n"
         "너는 ADS-B Chat 어시스턴트야. 사용자가 항공기 hex 코드나 좌표를 언급하면 "
         "자동으로 조회된 정보가 [참고 정보]로 제공돼. 이 정보를 활용해서 상세하게 답변해. "
         "항공사명, 기종, 위치(지역명), 고도, 속도 등을 포함해서 한국어로 답변해."
