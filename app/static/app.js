@@ -6,6 +6,35 @@ const cancelBtn = document.getElementById("cancel-btn");
 const statusEl = document.getElementById("status");
 const llmToggle = document.getElementById("llm-toggle");
 const closeLlmBtn = document.getElementById("close-llm");
+const toolbarEl = document.getElementById("toolbar");
+const mapView = document.getElementById("map-view");
+const mapFrame = document.getElementById("map-frame");
+const tabs = document.querySelectorAll("#tabs .tab");
+
+// --- Tab switching (Chat / Map) ---
+// ADSBexchange 글로벌 맵을 lazy iframe으로 임베드.
+// Map 탭을 처음 클릭할 때만 iframe src를 세팅하여 불필요한 트래픽 방지.
+const MAP_SRC = "https://globe.adsbexchange.com/?lat=37.4&lon=127.0&zoom=6";
+let mapLoaded = false;
+
+function switchView(view) {
+  tabs.forEach(t => t.classList.toggle("active", t.dataset.view === view));
+  if (view === "map") {
+    messagesEl.hidden = true;
+    toolbarEl.hidden = true;
+    mapView.hidden = false;
+    if (!mapLoaded) {
+      mapFrame.src = MAP_SRC;
+      mapLoaded = true;
+    }
+  } else {
+    messagesEl.hidden = false;
+    toolbarEl.hidden = false;
+    mapView.hidden = true;
+  }
+}
+
+tabs.forEach(t => t.addEventListener("click", () => switchView(t.dataset.view)));
 
 let chatHistory = [];
 let generating = false;

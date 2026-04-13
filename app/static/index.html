@@ -13,11 +13,25 @@
     <header>
       <div class="header-left">
         <h1><a href="./" style="color:inherit;text-decoration:none;">ADS-B Chat</a></h1>
+        <nav id="tabs">
+          <button class="tab active" data-view="chat" type="button">Chat</button>
+          <button class="tab" data-view="map" type="button">Map</button>
+        </nav>
       </div>
       <span id="status" class="status offline">offline</span>
     </header>
 
     <div id="messages"></div>
+
+    <div id="map-view" hidden>
+      <iframe id="map-frame"
+              referrerpolicy="no-referrer"
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+              title="ADSBexchange Global Map"></iframe>
+      <div class="map-attribution">
+        Powered by <a href="https://globe.adsbexchange.com/" target="_blank" rel="noopener">ADSBexchange</a>
+      </div>
+    </div>
 
     <div id="toolbar">
       <div id="quickstart">
