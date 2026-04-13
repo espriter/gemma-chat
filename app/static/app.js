@@ -4,6 +4,8 @@ const input = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
 const cancelBtn = document.getElementById("cancel-btn");
 const statusEl = document.getElementById("status");
+const llmToggle = document.getElementById("llm-toggle");
+const closeLlmBtn = document.getElementById("close-llm");
 
 let chatHistory = [];
 let generating = false;
@@ -48,26 +50,51 @@ async function checkHealth() {
       gpuReady = true;
       statusEl.textContent = "GPU";
       statusEl.className = "status online";
-      input.placeholder = "AI에게 질문하기...";
-      input.disabled = false;
-      sendBtn.disabled = false;
+      llmToggle.classList.remove("disabled");
+      llmToggle.querySelector(".llm-text").textContent = "LLM에게 질문하기";
     } else {
       gpuReady = false;
       statusEl.textContent = "GPU off";
       statusEl.className = "status offline";
-      input.placeholder = "GPU Desktop이 꺼져있어 대화 불가. Quickstart 버튼을 사용하세요.";
-      input.disabled = true;
-      sendBtn.disabled = true;
+      llmToggle.classList.add("disabled");
+      llmToggle.querySelector(".llm-text").textContent = "LLM 대화 불가 (GPU 꺼짐)";
+      // GPU 꺼지면 이미 열려있던 입력창도 닫기
+      if (!form.hidden) closeLlmForm();
     }
   } catch {
     gpuReady = false;
     statusEl.textContent = "offline";
     statusEl.className = "status offline";
-    input.placeholder = "서버 연결 실패";
-    input.disabled = true;
-    sendBtn.disabled = true;
+    llmToggle.classList.add("disabled");
+    llmToggle.querySelector(".llm-text").textContent = "서버 연결 실패";
+    if (!form.hidden) closeLlmForm();
   }
 }
+
+function openLlmForm() {
+  form.hidden = false;
+  llmToggle.hidden = true;
+  setTimeout(() => input.focus(), 50);
+}
+
+function closeLlmForm() {
+  form.hidden = true;
+  llmToggle.hidden = false;
+  input.value = "";
+  input.style.height = "auto";
+}
+
+llmToggle.addEventListener("click", () => {
+  if (!gpuReady) {
+    alert("GPU Desktop이 꺼져있어 대화 모드를 쓸 수 없습니다. Quickstart 버튼으로 데이터 조회는 가능합니다.");
+    return;
+  }
+  openLlmForm();
+});
+
+closeLlmBtn.addEventListener("click", () => {
+  closeLlmForm();
+});
 
 checkHealth();
 setInterval(checkHealth, 30000); // 30초마다 상태 확인
@@ -127,8 +154,8 @@ async function handleQuickstart(btn) {
     contentEl.outerHTML = `<div class="content">${marked.parse(data.result)}</div>`;
     resultDiv.querySelectorAll("pre code").forEach(b => hljs.highlightElement(b));
 
-    // Action buttons — 내부 접근에서만 LLM 요약 버튼 표시
-    if (!IS_EXTERNAL) {
+    // Action buttons — 내부 접근 + GPU 켜져있을 때만 LLM 요약 버튼 표시
+    if (!IS_EXTERNAL && gpuReady) {
       const btnGroup = document.createElement("div");
       btnGroup.className = "result-actions";
 

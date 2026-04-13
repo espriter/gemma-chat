@@ -18,23 +18,48 @@
       <span id="status" class="status offline">offline</span>
     </header>
 
-    <div id="quickstart">
-      <span class="qs-label">Quick</span>
-      <button class="qs-btn" data-tool="recent_aircraft" data-args='{"minutes":30,"limit":10}'>최근 항공기</button>
-      <button class="qs-btn" data-tool="traffic_summary" data-args='{"days":7}'>주간 트래픽</button>
-      <button class="qs-btn" data-tool="farthest_aircraft" data-args='{"hours":24,"limit":10}'>가장 먼 항공기</button>
-      <button class="qs-btn" data-tool="search_aircraft" data-args='{"hex_ident":"","hours":24}'>항공기 최근 위치</button>
-      <button class="qs-btn" data-tool="lookup_aircraft" data-args='{"hex_ident":""}'>항공기 정보</button>
-      <button class="qs-btn" data-tool="get_weather" data-args='{"location":"Seongnam"}'>성남 날씨</button>
-    </div>
-
     <div id="messages"></div>
 
-    <form id="chat-form" onsubmit="return false">
-      <textarea id="input" placeholder="AI에게 질문하기..." rows="1" autofocus></textarea>
-      <button type="submit" id="send-btn">Send</button>
-      <button type="button" id="cancel-btn" style="display:none;">Stop</button>
-    </form>
+    <div id="toolbar">
+      <div id="quickstart">
+        <button class="qs-btn" data-tool="recent_aircraft" data-args='{"minutes":30,"limit":10}'>
+          <span class="qs-icon">✈</span>
+          <span class="qs-label">최근 항공기</span>
+        </button>
+        <button class="qs-btn" data-tool="traffic_summary" data-args='{"days":7}'>
+          <span class="qs-icon">📊</span>
+          <span class="qs-label">주간 트래픽</span>
+        </button>
+        <button class="qs-btn" data-tool="farthest_aircraft" data-args='{"hours":24,"limit":10}'>
+          <span class="qs-icon">🌐</span>
+          <span class="qs-label">가장 먼 항공기</span>
+        </button>
+        <button class="qs-btn" data-tool="search_aircraft" data-args='{"hex_ident":"","hours":24}'>
+          <span class="qs-icon">🔍</span>
+          <span class="qs-label">항공기 위치</span>
+        </button>
+        <button class="qs-btn" data-tool="lookup_aircraft" data-args='{"hex_ident":""}'>
+          <span class="qs-icon">ℹ️</span>
+          <span class="qs-label">항공기 정보</span>
+        </button>
+        <button class="qs-btn" data-tool="get_weather" data-args='{"location":"Seongnam"}'>
+          <span class="qs-icon">☁️</span>
+          <span class="qs-label">성남 날씨</span>
+        </button>
+      </div>
+
+      <button id="llm-toggle" type="button">
+        <span class="llm-icon">💬</span>
+        <span class="llm-text">LLM에게 질문하기</span>
+      </button>
+
+      <form id="chat-form" onsubmit="return false" hidden>
+        <button type="button" id="close-llm" aria-label="닫기">✕</button>
+        <textarea id="input" placeholder="AI에게 질문하기..." rows="1"></textarea>
+        <button type="submit" id="send-btn">Send</button>
+        <button type="button" id="cancel-btn">Stop</button>
+      </form>
+    </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
