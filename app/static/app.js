@@ -14,7 +14,11 @@ const tabs = document.querySelectorAll("#tabs .tab");
 // --- Tab switching (Chat / Map) ---
 // ADSBexchange 글로벌 맵을 lazy iframe으로 임베드.
 // Map 탭을 처음 클릭할 때만 iframe src를 세팅하여 불필요한 트래픽 방지.
+// iOS/Android는 ITP/third-party cookie 차단으로 iframe 내 데이터 fetch가 403.
+// → 모바일은 iframe 대신 "새 창에서 열기" 안내로 대체.
 const MAP_SRC = "https://globe.adsbexchange.com/?lat=37.4&lon=127.0&zoom=6";
+const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const mobileNotice = document.getElementById("map-mobile-notice");
 let mapLoaded = false;
 
 function switchView(view) {
@@ -23,9 +27,18 @@ function switchView(view) {
     messagesEl.hidden = true;
     toolbarEl.hidden = true;
     mapView.hidden = false;
-    if (!mapLoaded) {
-      mapFrame.src = MAP_SRC;
-      mapLoaded = true;
+    if (IS_MOBILE) {
+      // 모바일: iframe 숨기고 안내 표시
+      mapFrame.hidden = true;
+      mobileNotice.hidden = false;
+    } else {
+      // 데스크탑: iframe lazy load
+      mobileNotice.hidden = true;
+      mapFrame.hidden = false;
+      if (!mapLoaded) {
+        mapFrame.src = MAP_SRC;
+        mapLoaded = true;
+      }
     }
   } else {
     messagesEl.hidden = false;
@@ -36,10 +49,12 @@ function switchView(view) {
 
 tabs.forEach(t => t.addEventListener("click", () => switchView(t.dataset.view)));
 
-// 새 창으로 열기 — 403/차단 시 fallback
-document.getElementById("map-open-new").addEventListener("click", () => {
+// 새 창으로 열기 — 403/차단 시 fallback (데스크탑 푸터 + 모바일 안내 공통)
+function openMapNewTab() {
   window.open(MAP_SRC, "_blank", "noopener");
-});
+}
+document.getElementById("map-open-new").addEventListener("click", openMapNewTab);
+document.getElementById("map-open-new-mobile").addEventListener("click", openMapNewTab);
 
 // 다시 로드 — iframe src를 한번 비웠다가 재설정 (캐시 우회)
 document.getElementById("map-reload").addEventListener("click", () => {

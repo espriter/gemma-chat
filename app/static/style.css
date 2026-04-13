@@ -211,6 +211,78 @@ header h1::before {
   background: #000;
 }
 
+#map-frame[hidden] {
+  display: none !important;
+}
+
+/* --- Mobile notice (shown instead of iframe on iOS/Android) --- */
+
+#map-mobile-notice {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-base);
+}
+
+#map-mobile-notice[hidden] {
+  display: none !important;
+}
+
+.mobile-notice-inner {
+  max-width: 360px;
+  text-align: center;
+}
+
+.mobile-notice-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.mobile-notice-inner h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.mobile-notice-inner p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.mobile-notice-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 24px;
+  min-height: 48px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t), transform var(--t);
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+.mobile-notice-btn:hover {
+  background: #79c0ff;
+}
+
+.mobile-notice-btn:active {
+  transform: scale(0.97);
+}
+
 .map-attribution {
   flex-shrink: 0;
   padding: 8px 12px;

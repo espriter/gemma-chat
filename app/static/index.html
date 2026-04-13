@@ -25,9 +25,16 @@
 
     <div id="map-view" hidden>
       <iframe id="map-frame"
-              referrerpolicy="no-referrer"
               allow="geolocation; fullscreen"
               title="ADSBexchange Global Map"></iframe>
+      <div id="map-mobile-notice" hidden>
+        <div class="mobile-notice-inner">
+          <div class="mobile-notice-icon">🗺</div>
+          <h2>ADSBexchange 글로벌 맵</h2>
+          <p>iOS/모바일 브라우저는 보안 정책상 iframe 임베드가 제대로 동작하지 않습니다 (데이터 fetch가 403으로 차단됨).</p>
+          <button type="button" id="map-open-new-mobile" class="mobile-notice-btn">새 창에서 열기 ↗</button>
+        </div>
+      </div>
       <div class="map-attribution">
         <span>Powered by <a href="https://globe.adsbexchange.com/" target="_blank" rel="noopener">ADSBexchange</a></span>
         <button type="button" id="map-open-new" class="map-link-btn">새 창으로 열기 ↗</button>
