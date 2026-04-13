@@ -62,7 +62,7 @@ def _check_rate_limit(ip: str) -> bool:
 async def _notify_slack(backend: str, user_msg: str, client_ip: str):
     """LLM 요청 시 Slack 알림 (fire-and-forget)."""
     try:
-        text = f":robot_face: *ADS-B Chat LLM 요청*\n>*Backend:* `{backend}`\n>*IP:* `{client_ip}`\n>*내용:* {user_msg[:200]}"
+        text = f":robot_face: *ADS-B View LLM 요청*\n>*Backend:* `{backend}`\n>*IP:* `{client_ip}`\n>*내용:* {user_msg[:200]}"
         async with httpx.AsyncClient(timeout=5) as client:
             await client.post(SLACK_WEBHOOK, json={"text": text})
     except Exception:
@@ -126,7 +126,7 @@ SYSTEM_PROMPT_GPU = {
     "role": "system",
     "content": (
         "/no_think\n"
-        "너는 ADS-B Chat 어시스턴트야. 사용자가 항공기 hex 코드나 좌표를 언급하면 "
+        "너는 ADS-B View 어시스턴트야. 사용자가 항공기 hex 코드나 좌표를 언급하면 "
         "자동으로 조회된 정보가 [참고 정보]로 제공돼. 이 정보를 활용해서 상세하게 답변해. "
         "항공사명, 기종, 위치(지역명), 고도, 속도 등을 포함해서 한국어로 답변해."
     ),

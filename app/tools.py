@@ -64,6 +64,70 @@ def _execute_query(sql: str, params: tuple = None, as_dicts: bool = False):
         return ([], msg) if as_dicts else msg
 
 
+TRINO_HOST = os.environ.get("TRINO_HOST", "localhost")
+TRINO_PORT = int(os.environ.get("TRINO_PORT", "8090"))
+TRINO_USER = os.environ.get("TRINO_USER", "gemma-chat")
+
+
+def _execute_trino(sql: str, catalog: str = "iceberg", schema: str = "adsb_ice",
+                   as_dicts: bool = False):
+    """Execute SQL against Trino via async statement API (follows nextUri)."""
+    sql_upper = sql.upper()
+    for kw in BLOCKED_KEYWORDS:
+        if kw in sql_upper:
+            msg = f"차단됨: {kw} 구문은 사용할 수 없습니다 (읽기 전용)."
+            return ([], msg) if as_dicts else msg
+
+    base = f"http://{TRINO_HOST}:{TRINO_PORT}/v1/statement"
+    headers = {
+        "X-Trino-User": TRINO_USER,
+        "X-Trino-Catalog": catalog,
+        "X-Trino-Schema": schema,
+        "Content-Type": "text/plain",
+    }
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(base, headers=headers, content=sql)
+            resp.raise_for_status()
+            data = resp.json()
+
+            columns = None
+            all_rows: list = []
+            hops = 0
+            while True:
+                if data.get("error"):
+                    err_msg = data["error"].get("message", "Trino error")
+                    return ([], f"Trino 오류: {err_msg}") if as_dicts else f"Trino 오류: {err_msg}"
+                if columns is None and data.get("columns"):
+                    columns = [c["name"] for c in data["columns"]]
+                if data.get("data"):
+                    all_rows.extend(data["data"])
+                next_uri = data.get("nextUri")
+                if not next_uri or len(all_rows) >= MAX_ROWS or hops >= 200:
+                    break
+                resp = client.get(next_uri, headers={"X-Trino-User": TRINO_USER})
+                resp.raise_for_status()
+                data = resp.json()
+                hops += 1
+
+            if not columns:
+                return ([], "결과 없음.") if as_dicts else "결과 없음."
+
+            if as_dicts:
+                return [dict(zip(columns, row)) for row in all_rows[:MAX_ROWS]], None
+
+            lines = [" | ".join(columns), " | ".join("---" for _ in columns)]
+            for row in all_rows[:MAX_ROWS]:
+                lines.append(" | ".join(str(v) if v is not None else "" for v in row))
+            result = "\n".join(lines)
+            if len(all_rows) >= MAX_ROWS:
+                result += f"\n\n(결과가 {MAX_ROWS}행으로 제한됨)"
+            return result
+    except Exception as e:
+        msg = f"Trino 쿼리 오류: {e}"
+        return ([], msg) if as_dicts else msg
+
+
 def _fmt_num(n):
     """Format number with comma separators."""
     if n is None:
@@ -321,16 +385,119 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
                 return err
             if not rows:
                 return f"최근 {days}일 트래픽 데이터가 없습니다."
-            lines = [f"### 최근 {days}일 트래픽 요약\n"]
+            lines = [f"### 최근 {days}일 트래픽 요약 — {len(rows)}일\n"]
+            lines.append("| 날짜 | 메시지 | 고유 항공기 | 평균 고도(ft) | 최대 고도(ft) |")
+            lines.append("|------|--------|-------------|---------------|---------------|")
             for r in rows:
                 d = str(r.get("date_generated", "-"))
                 msgs = _fmt_num(r.get("total_messages"))
                 planes = _fmt_num(r.get("unique_aircraft"))
                 avg_alt = _fmt_num(r.get("avg_altitude"))
                 max_alt = _fmt_num(r.get("max_altitude"))
-                lines.append(f"**{d}** — {msgs}건, {planes}대, 평균고도 {avg_alt}ft, 최대 {max_alt}ft")
+                lines.append(f"| {d} | {msgs} | {planes} | {avg_alt} | {max_alt} |")
             return "\n".join(lines)
         return _execute_query(sql)
+
+    if name == "agg_weekly_traffic":
+        days = min(args.get("days", 7), 30)
+        sql = f"""
+            SELECT dt,
+                   COUNT(DISTINCT hex_ident)       AS aircraft_count,
+                   SUM(message_count)              AS total_messages,
+                   SUM(position_count)             AS total_positions,
+                   ROUND(AVG(avg_altitude))        AS avg_altitude,
+                   MAX(max_altitude)               AS max_altitude,
+                   ROUND(AVG(on_ground_ratio), 3)  AS avg_on_ground_ratio
+            FROM iceberg.adsb_ice.daily_aircraft_stats
+            GROUP BY dt
+            ORDER BY dt DESC
+            LIMIT {int(days)}
+        """
+        if pretty:
+            rows, err = _execute_trino(sql, as_dicts=True)
+            if err:
+                return err
+            if not rows:
+                return f"집계 레이어(daily_aircraft_stats)에 최근 {days}일 데이터가 없습니다."
+            lines = [f"### 최근 {days}일 트래픽 (집계 · Iceberg) — {len(rows)}일\n"]
+            lines.append("| 날짜 | 고유 항공기 | 메시지 | 위치 | 평균 고도(ft) | 최대 고도(ft) | 지상 비율 |")
+            lines.append("|------|-------------|--------|------|---------------|---------------|-----------|")
+            for r in rows:
+                d = str(r.get("dt", "-"))
+                ac = _fmt_num(r.get("aircraft_count"))
+                msgs = _fmt_num(r.get("total_messages"))
+                pos = _fmt_num(r.get("total_positions"))
+                avg_alt = _fmt_num(r.get("avg_altitude"))
+                max_alt = _fmt_num(r.get("max_altitude"))
+                ogr = r.get("avg_on_ground_ratio")
+                ogr_s = f"{ogr*100:.1f}%" if isinstance(ogr, (int, float)) else "-"
+                lines.append(f"| {d} | {ac} | {msgs} | {pos} | {avg_alt} | {max_alt} | {ogr_s} |")
+            lines.append("\n*출처: Airflow DAG 집계 (`iceberg.adsb_ice.daily_aircraft_stats`)*")
+            return "\n".join(lines)
+        return _execute_trino(sql)
+
+    if name == "gps_jump_snapshot":
+        hours = min(args.get("hours", 24), 168)
+        limit = min(args.get("limit", 50), 200)
+        sql = f"""
+            SELECT last_event_ts,
+                   hex_ident,
+                   callsign,
+                   last_altitude,
+                   last_latitude,
+                   last_longitude,
+                   jump_event_count,
+                   max_jump_mps,
+                   max_jump_distance_m,
+                   anomaly_rule
+            FROM iceberg.adsb_ice.hourly_gps_jump_snapshot
+            WHERE last_event_ts >= current_timestamp - INTERVAL '{int(hours)}' HOUR
+            ORDER BY last_event_ts DESC
+            LIMIT {int(limit)}
+        """
+        if pretty:
+            rows, err = _execute_trino(sql, as_dicts=True)
+            if err:
+                return err
+            if not rows:
+                return (
+                    f"### GPS 이상 스냅샷 — 최근 {hours}시간\n\n"
+                    "이상 감지 없음 ✅ (Airflow 시간별 배치 기준, 이상 없는 시간은 0 rows 가 정상)"
+                )
+            lines = [f"### GPS 이상 스냅샷 — 최근 {hours}시간, {len(rows)}건\n"]
+            lines.append("| 시각(KST) | hex | 항공사/기종 | 콜사인 | 고도(ft) | 위도 | 경도 | 이벤트 | 최대속도(m/s) | 최대거리(m) | 규칙 |")
+            lines.append("|-----------|-----|-------------|--------|----------|------|------|--------|---------------|-------------|------|")
+            for r in rows:
+                ts_raw = r.get("last_event_ts")
+                ts_kst = "-"
+                if ts_raw:
+                    s = str(ts_raw).replace("T", " ")
+                    # Trino ISO 시각(UTC) → KST 간이 변환
+                    try:
+                        from datetime import datetime, timezone, timedelta
+                        dt_utc = datetime.fromisoformat(s.split("+")[0].split(".")[0]).replace(tzinfo=timezone.utc)
+                        dt_kst = dt_utc + timedelta(hours=9)
+                        ts_kst = dt_kst.strftime("%m-%d %H:%M")
+                    except Exception:
+                        ts_kst = s[:16]
+                hex_id = r.get("hex_ident", "-")
+                airline = _lookup_airline(hex_id) or "-"
+                call = r.get("callsign") or "-"
+                alt = _fmt_num(r.get("last_altitude"))
+                lat = r.get("last_latitude", "-")
+                lon = r.get("last_longitude", "-")
+                ev = _fmt_num(r.get("jump_event_count"))
+                mps = r.get("max_jump_mps")
+                mps_s = f"{mps:.0f}" if isinstance(mps, (int, float)) else "-"
+                dist = r.get("max_jump_distance_m")
+                dist_s = f"{dist:,.0f}" if isinstance(dist, (int, float)) else "-"
+                rule = r.get("anomaly_rule") or "-"
+                lines.append(
+                    f"| {ts_kst} | `{hex_id}` | {airline} | {call} | {alt} | {lat} | {lon} | {ev} | {mps_s} | {dist_s} | {rule} |"
+                )
+            lines.append("\n*출처: Airflow DAG `adsb_curated_hourly_gps_jump_snapshot` (`iceberg.adsb_ice.hourly_gps_jump_snapshot`)*")
+            return "\n".join(lines)
+        return _execute_trino(sql)
 
     if name == "farthest_aircraft":
         hours = args.get("hours", 24)
@@ -697,6 +864,44 @@ TOOL_DEFINITIONS = [
                         "type": "integer",
                         "description": "조회할 일수 (기본: 7, 최대: 30)",
                     }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "agg_weekly_traffic",
+            "description": "Airflow 배치가 생성한 집계 레이어(iceberg.adsb_ice.daily_aircraft_stats)에서 일별 트래픽 요약을 조회합니다. 고유 항공기 수, 메시지/위치 합계, 평균/최대 고도, 평균 지상 비율을 Trino로 읽어옵니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "조회할 일수 (기본: 7, 최대: 30)",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "gps_jump_snapshot",
+            "description": "Airflow 배치(adsb_curated_hourly_gps_jump_snapshot)가 시간별로 집계한 GPS jump 이상 후보를 조회합니다. 이상이 없는 시간대는 0건이 정상입니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hours": {
+                        "type": "integer",
+                        "description": "조회 범위 시간 (기본: 24, 최대: 168)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "최대 결과 수 (기본: 50, 최대: 200)",
+                    },
                 },
                 "required": [],
             },

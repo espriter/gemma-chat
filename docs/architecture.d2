@@ -1,7 +1,7 @@
 direction: right
 
 title: {
-  label: ADS-B Chat Architecture
+  label: ADS-B View Architecture
   near: top-center
   shape: text
   style.font-size: 24
@@ -39,9 +39,16 @@ minipc: {
   }
 
   tools: {
-    label: "Tool Router\n(tools.py)\n8 tools"
+    label: "Tool Router\n(tools.py)\n10 quickstart tools"
     shape: hexagon
     style.fill: "#FF9800"
+    style.font-color: white
+  }
+
+  trino: {
+    label: "Trino (coord)\n:8090\nIceberg catalog"
+    shape: rectangle
+    style.fill: "#673AB7"
     style.font-color: white
   }
 
@@ -159,8 +166,12 @@ minipc.fastapi -> minipc.tools: "/api/tool\n(quickstart)" {
   style.stroke: "#FF9800"
 }
 
-minipc.tools -> rpi4.postgres: "SELECT\n(read-only)" {
+minipc.tools -> rpi4.postgres: "SELECT\n(raw)" {
   style.stroke: "#e65100"
+}
+
+minipc.tools -> minipc.trino: "SELECT\n(agg layer)" {
+  style.stroke: "#673AB7"
 }
 
 # Enrich flow

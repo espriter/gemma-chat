@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ADS-B Chat</title>
+  <title>ADS-B View</title>
   <link rel="icon" href="static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="static/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
@@ -12,7 +12,7 @@
   <div id="app">
     <header>
       <div class="header-left">
-        <h1><a href="./" style="color:inherit;text-decoration:none;">ADS-B Chat</a></h1>
+        <h1><a href="./" style="color:inherit;text-decoration:none;">ADS-B View</a></h1>
         <nav id="tabs">
           <button class="tab active" data-view="chat" type="button">Chat</button>
           <button class="tab" data-view="map" type="button">Map</button>
@@ -51,6 +51,14 @@
         <button class="qs-btn" data-tool="traffic_summary" data-args='{"days":7}'>
           <span class="qs-icon">📊</span>
           <span class="qs-label">주간 트래픽</span>
+        </button>
+        <button class="qs-btn" data-tool="agg_weekly_traffic" data-args='{"days":7}'>
+          <span class="qs-icon">🧊</span>
+          <span class="qs-label">주간 트래픽 (집계)</span>
+        </button>
+        <button class="qs-btn" data-tool="gps_jump_snapshot" data-args='{"hours":24,"limit":50}'>
+          <span class="qs-icon">⚠️</span>
+          <span class="qs-label">GPS 이상 스냅샷</span>
         </button>
         <button class="qs-btn" data-tool="farthest_aircraft" data-args='{"hours":24,"limit":10}'>
           <span class="qs-icon">🌐</span>

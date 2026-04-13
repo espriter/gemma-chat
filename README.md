@@ -1,4 +1,4 @@
-# ADS-B Chat
+# ADS-B View
 
 ADS-B 항공기 데이터를 퀵스타트 버튼으로 즉시 조회하고, GPU Desktop LLM으로 요약/대화하는 웹앱.
 
@@ -43,9 +43,9 @@ Browser → FastAPI /api/tool → tools.py → PostgreSQL → Pretty 포맷 → 
 
 > **GPU Desktop에는 gemma-chat 코드를 배포하지 않는다.** MiniPC가 SSH 터널로 Ollama API만 호출.
 
-## 퀵스타트 도구 (8개)
+## 퀵스타트 도구 (10개)
 
-### DB 도구 (5개) — RPI4 PostgreSQL
+### DB 도구 (5개) — RPI4 PostgreSQL (raw `adsb_message`)
 
 | 도구 | 설명 | 예시 |
 |------|------|------|
@@ -53,7 +53,16 @@ Browser → FastAPI /api/tool → tools.py → PostgreSQL → Pretty 포맷 → 
 | `search_aircraft` | 특정 hex 10분 단위 위치 이력 (최대 6행) | "71BE07 경로" |
 | `unique_aircraft` | 고유 항공기 통계 | "오늘 몇 대 지나갔어?" |
 | `farthest_aircraft` | 안테나 기준 최장거리 항공기 | "가장 먼 비행기" |
-| `traffic_summary` | 일별 트래픽 요약 | "주간 트래픽" |
+| `traffic_summary` | 일별 트래픽 요약 (raw) | "주간 트래픽" |
+
+### 집계 레이어 도구 (2개) — Trino → Iceberg (`iceberg.adsb_ice.*`)
+
+Airflow 배치가 HDFS + Iceberg에 적재한 결과를 Trino로 조회. `adsb-platform` 플랫폼의 Curated/Aggregation 레이어를 그대로 읽는다.
+
+| 도구 | 테이블 | 설명 |
+|------|--------|------|
+| `agg_weekly_traffic` | `daily_aircraft_stats` | 일별 집계 트래픽 (고유 항공기/메시지/위치/평균·최대 고도/평균 지상 비율) |
+| `gps_jump_snapshot` | `hourly_gps_jump_snapshot` | 시간별 GPS jump 이상 스냅샷 (이상 없는 시간 0 rows = 정상) |
 
 ### 외부 API 도구 (3개)
 
@@ -66,6 +75,7 @@ Browser → FastAPI /api/tool → tools.py → PostgreSQL → Pretty 포맷 → 
 ### 안전장치
 
 - 12개 DML/DDL 키워드 차단 + PG readonly + 전용 계정 + 60초 타임아웃 + 500행 제한
+- Trino는 동일한 DML/DDL 키워드 필터 + `MAX_ROWS=500` 제한 (`_execute_trino`)
 
 ## 기술 스택
 
@@ -84,7 +94,7 @@ Browser → FastAPI /api/tool → tools.py → PostgreSQL → Pretty 포맷 → 
 ## 프론트엔드
 
 - **디자인**: GitHub Dark 모바일 우선
-- **퀵스타트**: 7개 버튼, 모바일 가로 스크롤, Pretty 포맷 (마크다운 테이블)
+- **퀵스타트**: 9개 버튼, 모바일 가로 스크롤, Pretty 포맷 (마크다운 테이블)
 - **결과 액션**: LLM 정리 (보강→GPU 요약), 지역 분석 (Nominatim)
 - **LLM 대화**: Non-streaming, 취소 버튼, 경과 시간, 통계 `[GPU/Local] tok/s`
 - **Templates**: 쿼리 파라미터 복붙용 페이지
@@ -106,7 +116,7 @@ GPU Desktop은 상시 OFF. 필요할 때 원격으로 켜고 끔.
 ├── app/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI: chat(GPU fallback), tool, enrich, wol, health
-│   ├── tools.py              # 8개 도구 + pretty 포맷 + DB/API 실행
+│   ├── tools.py              # 10개 도구 + pretty 포맷 + PostgreSQL/Trino/외부 API 실행
 │   └── static/
 │       ├── index.html        # 메인 UI (퀵스타트 + 채팅)
 │       ├── style.css         # GitHub Dark 모바일 우선 테마
