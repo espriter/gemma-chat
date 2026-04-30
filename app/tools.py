@@ -250,55 +250,56 @@ def execute_tool(name: str, args: dict, pretty: bool = False) -> str:
             return "\n".join(lines)
         return _execute_query(sql)
 
-    if name == "search_aircraft":
-        hex_ident = args.get("hex_ident", "").strip().upper()
-        hours = args.get("hours", 24)
+    if name == "today_traffic":
         sql = """
-            SELECT hex_ident,
-                   DATE_TRUNC('hour', date_generated + time_generated + INTERVAL '9 hours')
-                     + INTERVAL '10 min' * FLOOR(EXTRACT(MINUTE FROM date_generated + time_generated) / 10)
-                     AS time_slot_kst,
-                   (ARRAY_AGG(altitude ORDER BY date_generated DESC, time_generated DESC))[1] AS altitude,
-                   (ARRAY_AGG(ground_speed ORDER BY date_generated DESC, time_generated DESC))[1] AS ground_speed,
-                   (ARRAY_AGG(latitude ORDER BY date_generated DESC, time_generated DESC))[1] AS latitude,
-                   (ARRAY_AGG(longitude ORDER BY date_generated DESC, time_generated DESC))[1] AS longitude,
-                   (ARRAY_AGG(is_on_ground ORDER BY date_generated DESC, time_generated DESC))[1] AS is_on_ground,
-                   COUNT(*) AS msg_count
+            SELECT
+              'UTC 오늘 (' || CURRENT_DATE || ')' AS bucket,
+              1 AS sort_order,
+              COUNT(*) AS total_messages,
+              COUNT(DISTINCT hex_ident) AS unique_aircraft,
+              ROUND(AVG(altitude)) AS avg_altitude,
+              MAX(altitude) AS max_altitude,
+              ROUND(AVG(ground_speed)) AS avg_speed,
+              SUM(CASE WHEN is_on_ground THEN 1 ELSE 0 END) AS ground_count
             FROM adsb_message
-            WHERE hex_ident = %s
-              AND (date_generated + time_generated) >= (NOW() - %s * INTERVAL '1 hour')
-            GROUP BY hex_ident, time_slot_kst
-            ORDER BY time_slot_kst DESC
-            LIMIT 6
+            WHERE date_generated = CURRENT_DATE
+            UNION ALL
+            SELECT
+              'KST 오늘 (' || (NOW() AT TIME ZONE 'Asia/Seoul')::date || ')' AS bucket,
+              2 AS sort_order,
+              COUNT(*) AS total_messages,
+              COUNT(DISTINCT hex_ident) AS unique_aircraft,
+              ROUND(AVG(altitude)) AS avg_altitude,
+              MAX(altitude) AS max_altitude,
+              ROUND(AVG(ground_speed)) AS avg_speed,
+              SUM(CASE WHEN is_on_ground THEN 1 ELSE 0 END) AS ground_count
+            FROM adsb_message
+            WHERE (date_generated + time_generated) >= ((NOW() AT TIME ZONE 'Asia/Seoul')::date::timestamp) AT TIME ZONE 'Asia/Seoul'
+              AND (date_generated + time_generated) <  ((NOW() AT TIME ZONE 'Asia/Seoul')::date::timestamp + INTERVAL '1 day') AT TIME ZONE 'Asia/Seoul'
+            ORDER BY sort_order
         """
-        params = (hex_ident, int(hours))
         if pretty:
-            rows, err = _execute_query(sql, params=params, as_dicts=True)
+            rows, err = _execute_query(sql, as_dicts=True)
             if err:
                 return err
             if not rows:
-                return f"{hex_ident}: 최근 {hours}시간 내 데이터 없음"
-            airline = _lookup_airline(hex_ident)
-            header = f"### {hex_ident}"
-            if airline:
-                header += f" ({airline})"
-            header += f" — 위치 이력 (10분 단위, KST, 최근 {hours}시간)\n"
-            lines = [header]
-            lines.append("| 시간(KST) | 고도(ft) | 속도(kts) | 위도 | 경도 | 건수 | 비고 |")
-            lines.append("|-----------|----------|-----------|------|------|------|------|")
+                return "당일 트래픽 데이터가 없습니다."
+            lines = ["### 당일 트래픽 (UTC vs KST)\n"]
+            lines.append("| 기준 | 메시지 | 고유 항공기 | 평균 고도(ft) | 최대 고도(ft) | 평균 속도(kts) | 지상 메시지 |")
+            lines.append("|------|--------|-------------|---------------|---------------|----------------|-------------|")
             for r in rows:
-                slot = str(r.get("time_slot_kst", "-"))
-                if " " in slot:
-                    slot = slot.split(" ")[1][:5]
-                alt = _fmt_num(r.get("altitude"))
-                spd = _fmt_num(r.get("ground_speed"))
-                lat = r.get("latitude") or "-"
-                lon = r.get("longitude") or "-"
-                cnt = _fmt_num(r.get("msg_count"))
-                note = "지상" if r.get("is_on_ground") else ""
-                lines.append(f"| {slot} | {alt} | {spd} | {lat} | {lon} | {cnt} | {note} |")
+                bucket = r.get("bucket", "-")
+                msgs = _fmt_num(r.get("total_messages"))
+                planes = _fmt_num(r.get("unique_aircraft"))
+                avg_alt = _fmt_num(r.get("avg_altitude"))
+                max_alt = _fmt_num(r.get("max_altitude"))
+                avg_spd = _fmt_num(r.get("avg_speed"))
+                ground = _fmt_num(r.get("ground_count"))
+                lines.append(f"| {bucket} | {msgs} | {planes} | {avg_alt} | {max_alt} | {avg_spd} | {ground} |")
+            lines.append("")
+            lines.append("> KST는 UTC+9 (DB는 UTC 기준 적재). 두 값의 차이는 시점에 따라 자연스럽게 발생.")
             return "\n".join(lines)
-        return _execute_query(sql, params=params)
+        return _execute_query(sql)
 
     if name == "unique_aircraft":
         hours = args.get("hours", 24)
@@ -813,25 +814,12 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "search_aircraft",
-            "description": "특정 항공기(hex_ident)의 위치 이력을 조회합니다. 항공기 경로 추적에 유용합니다.",
+            "name": "today_traffic",
+            "description": "당일 트래픽 요약을 UTC 오늘과 KST 오늘 두 기준으로 비교 조회합니다. 메시지 수, 고유 항공기 수, 평균/최대 고도, 평균 속도, 지상 메시지 수를 보여줍니다. DB는 UTC 기준이라 KST 기준 트래픽은 별도 시간대 변환으로 계산합니다.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "hex_ident": {
-                        "type": "string",
-                        "description": "ICAO 24-bit 주소 (예: 71BE07, A1B2C3)",
-                    },
-                    "hours": {
-                        "type": "integer",
-                        "description": "조회 범위 시간 (기본: 24)",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "최대 결과 수 (기본: 50, 최대: 200)",
-                    },
-                },
-                "required": ["hex_ident"],
+                "properties": {},
+                "required": [],
             },
         },
     },
